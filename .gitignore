@@ -8,3 +8,8 @@ captures/
 *.apk
 *.keystore
 *.jks
+
+# Signaturschlüssel niemals einchecken
+keystore.properties
+keystore/
+dist/
