@@ -1,0 +1,7 @@
+external_id;sku;name;unit_price;currency;vat_rate;barcode;category;active;open_price
+JTL-10001;10001;"Kaffee klein";2.50;EUR;19.00;4012345678901;Getränke;true;false
+JTL-10002;10002;"Kaffee groß";3.20;EUR;19.00;4012345678902;Getränke;true;false
+JTL-10003;10003;"Croissant";1.90;EUR;7.00;;Backwaren;true;false
+JTL-10004;10004;"Buch ""Kassenwissen""";14.90;EUR;7.00;9783161484100;Bücher;true;false
+JTL-10005;10005;"Geschenkkarton";0.50;EUR;19.00;;Zubehör;true;false
+JTL-10006;10006;"Freier Betrag 19 %";0.00;EUR;19.00;;Sonstiges;true;true
