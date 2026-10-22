@@ -8,9 +8,17 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-/** Serialisiert alle Druck- und Schubladenaufträge über den konfigurierten Transport. */
-class PrinterService(private val context: Context, private val settings: SettingsRepository) {
-    private val mutex = Mutex()
+/**
+ * Serialisiert alle Druck- und Schubladenaufträge über den konfigurierten Transport.
+ * [deviceLock] teilt sich der Druck mit dem TSE-Zugang über dasselbe USB-Kabel, damit sich Bondaten und
+ * TSE-Befehle nie vermischen.
+ */
+class PrinterService(
+    private val context: Context,
+    private val settings: SettingsRepository,
+    private val deviceLock: Mutex = Mutex(),
+) {
+    private val mutex get() = deviceLock
 
     val columns: Int get() = settings.int(Key.PRINTER_COLUMNS)
     val configured: Boolean get() = settings[Key.PRINTER_MODE] != "none"

@@ -43,10 +43,8 @@ class UsbPrinterTransport(private val context: Context) : PrinterTransport {
             }
 
     override suspend fun send(data: ByteArray) {
-        val device = findPrinter() ?: throw PrinterException("Kein USB-Drucker gefunden. Kabel, Hub/OTG-Adapter und Stromversorgung prüfen.")
-        if (!usb.hasPermission(device) && !requestPermission(device)) {
-            throw PrinterException("USB-Berechtigung für den Drucker wurde nicht erteilt")
-        }
+        val device = findPrinter() ?: throw PrinterException(NOT_FOUND)
+        ensurePermission(device)
         val (iface, endpoint) = bulkOut(device) ?: throw PrinterException("Drucker hat keinen Bulk-OUT-Endpunkt")
         val conn = usb.openDevice(device) ?: throw PrinterException("USB-Verbindung konnte nicht geöffnet werden")
         try {
@@ -62,6 +60,25 @@ class UsbPrinterTransport(private val context: Context) : PrinterTransport {
         } finally {
             conn.close()
         }
+    }
+
+    /** Fragt bei Bedarf die USB-Berechtigung an (Android-Dialog „Zugriff erlauben“). */
+    suspend fun ensurePermission(device: UsbDevice) {
+        if (!usb.hasPermission(device) && !requestPermission(device)) {
+            throw PrinterException("USB-Berechtigung für den Drucker wurde nicht erteilt")
+        }
+    }
+
+    /** Schnittstelle mit Bulk-OUT und Bulk-IN (Rückkanal für Statusmeldungen und TSE-Antworten). */
+    fun bulkInOut(device: UsbDevice): Triple<UsbInterface, UsbEndpoint, UsbEndpoint>? {
+        for (i in 0 until device.interfaceCount) {
+            val iface = device.getInterface(i)
+            val eps = (0 until iface.endpointCount).map { iface.getEndpoint(it) }.filter { it.type == UsbConstants.USB_ENDPOINT_XFER_BULK }
+            val out = eps.firstOrNull { it.direction == UsbConstants.USB_DIR_OUT }
+            val inp = eps.firstOrNull { it.direction == UsbConstants.USB_DIR_IN }
+            if (out != null && inp != null) return Triple(iface, out, inp)
+        }
+        return null
     }
 
     private fun bulkOut(device: UsbDevice): Pair<UsbInterface, UsbEndpoint>? {
@@ -94,6 +111,7 @@ class UsbPrinterTransport(private val context: Context) : PrinterTransport {
     companion object {
         const val EPSON_VENDOR_ID = 0x04B8
         const val ACTION_USB_PERMISSION = "de.anypos.USB_PERMISSION"
+        const val NOT_FOUND = "Kein USB-Drucker gefunden. Kabel, Hub/OTG-Adapter und Stromversorgung prüfen."
         private const val CHUNK = 16 * 1024
         private const val TIMEOUT_MS = 5_000
     }

@@ -7,8 +7,9 @@ import kotlin.system.exitProcess
 private const val USAGE = """Mock-TSE (Epson ePOS Device XML) – KEINE echte TSE, keine gültigen Belege.
 
 Aufruf: ./gradlew :tse-mock:run --args="[--port 8009] [--scenario FRESH|JTL_TAKEOVER|OPERATIONAL]
-        [--secret EPSONKEY] [--latency-ms 0] [--bound-to-other-host] [--localhost] [--tls]"
+        [--secret EPSONKEY] [--latency-ms 0] [--bound-to-other-host] [--localhost] [--tls] [--escpos]"
         --tls: TLS wie Port 8143 am Drucker (Testzertifikat des Mocks), Standardport dann 8143
+        --escpos: zusätzlich TSE per ESC/POS (wie über USB) auf Port 9100
 
 Befehle auf der Konsole:
   status                         Merkmale anzeigen (GetStorageInfo)
@@ -21,6 +22,7 @@ Befehle auf der Konsole:
 fun main(args: Array<String>) {
     var port: Int? = null
     var tls = false
+    var escpos = false
     var config = MockConfig()
     var bind: InetAddress? = null // alle Schnittstellen, damit das Tablet den Dev-PC erreicht
     val it = args.iterator()
@@ -33,6 +35,7 @@ fun main(args: Array<String>) {
             "--bound-to-other-host" -> config = config.copy(boundToOtherHost = true)
             "--localhost" -> bind = InetAddress.getLoopbackAddress()
             "--tls" -> tls = true
+            "--escpos" -> escpos = true
             "--help", "-h" -> { println(USAGE); return }
             else -> { System.err.println("Unbekanntes Argument: $arg\n\n$USAGE"); exitProcess(2) }
         }
@@ -42,6 +45,8 @@ fun main(args: Array<String>) {
     val server = MockTseServer(tse, port ?: if (tls) 8143 else 8009, bind, if (tls) MockTseServer.tlsContext() else null) {
         println("${LocalTime.now().withNano(0)}  $it")
     }.start()
+    val escServer = if (escpos) MockEscPosServer(tse, 9100, bind) { println("${LocalTime.now().withNano(0)}  $it") }.start() else null
+    escServer?.let { println("ESC/POS-Zugang (wie USB) auf Port ${it.port}") }
     println("Mock-TSE lauscht auf Port ${server.port}${if (tls) " (TLS)" else ""} (${bind?.hostAddress ?: "alle Schnittstellen"}), Szenario ${config.scenario}")
     println("Seriennummer (hex): ${tse.serialNumber.joinToString("") { "%02X".format(it) }}")
     println("Testwerte: Admin-PIN ${config.adminPin}, TimeAdmin-PIN ${config.timeAdminPin}, Secret ${config.sharedSecret}")
@@ -54,11 +59,11 @@ fun main(args: Array<String>) {
             "" -> Unit
             "status" -> println(tse.handle("""{"storage":{"type":"COMMON","vendor":""},"function":"GetStorageInfo","input":{},"compress":{"required":false,"type":""}}"""))
             "power" -> { tse.powerCycle(); println("Neustart simuliert") }
-            "drop" -> { server.dropAllConnections(); println("Verbindungen getrennt") }
+            "drop" -> { server.dropAllConnections(); escServer?.dropAllConnections(); println("Verbindungen getrennt") }
             "inject" -> if (parts.size >= 2) { tse.inject(parts[1], parts.getOrNull(2)); println("eingeplant") } else println(USAGE)
             "fault" -> runCatching { server.injectFault(Fault.valueOf(parts[1].uppercase()), parts.getOrNull(2)) }
                 .onSuccess { println("eingeplant") }.onFailure { println(USAGE) }
-            "quit", "exit" -> { server.close(); return }
+            "quit", "exit" -> { server.close(); escServer?.close(); return }
             else -> println(USAGE)
         }
     }

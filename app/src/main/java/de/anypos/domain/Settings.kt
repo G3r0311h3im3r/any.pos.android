@@ -26,6 +26,7 @@ enum class Key(val default: String) {
     OPEN_DRAWER_ON_CARD("false"),
 
     TSE_MODE("none"),              // none | simulated | epson
+    TSE_CONNECTION(""),            // usb (ESC/POS über das Druckerkabel) | tcp (ePOS Device XML); leer = wie PRINTER_MODE
     TSE_HOST(""),                  // TSE-Host (Epson-Drucker); leer = PRINTER_HOST
     TSE_PORT(""),                  // ePOS Device XML; leer = 8143 mit TLS, 8009 ohne
     TSE_TLS("true"),               // TLS zum Drucker; ohne TLS ginge die TimeAdmin-PIN im Klartext übers Netz

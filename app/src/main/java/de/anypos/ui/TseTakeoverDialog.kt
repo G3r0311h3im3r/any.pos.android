@@ -52,7 +52,9 @@ fun TseTakeoverDialog(container: AppContainer, user: User, onDismiss: () -> Unit
     val values by container.settings.values.collectAsState()
     val registerId = values[Key.REGISTER_ID.name] ?: Key.REGISTER_ID.default
     val epsonMode = (values[Key.TSE_MODE.name] ?: Key.TSE_MODE.default) == "epson"
-    val tlsOk = values[Key.TSE_TLS.name] == "false" || !values[Key.TSE_TLS_FINGERPRINT.name].isNullOrBlank()
+    // Bei USB gibt es keine Netzverbindung und damit kein Zertifikat
+    val tlsOk = container.tseConnection() == "usb" ||
+        values[Key.TSE_TLS.name] == "false" || !values[Key.TSE_TLS_FINGERPRINT.name].isNullOrBlank()
     val writeOn = values[Key.TSE_WRITE_ENABLED.name] == "true"
     val pinSet = !values[Key.TSE_TIMEADMIN_PIN.name].isNullOrBlank()
 
@@ -110,7 +112,7 @@ fun TseTakeoverDialog(container: AppContainer, user: User, onDismiss: () -> Unit
 
             Text("1. Voraussetzungen", style = MaterialTheme.typography.titleSmall)
             check("Epson-TSE ausgewählt", epsonMode)
-            check("Verbindung verschlüsselt (Zertifikat bestätigt) oder bewusst ohne TLS", tlsOk)
+            check("Verbindung über USB oder verschlüsselt (Zertifikat bestätigt) oder bewusst ohne TLS", tlsOk)
             check("Schreibschutz aufgehoben", writeOn)
             check("TimeAdmin-PIN gesetzt", pinSet)
             check("Kassen-ID „$registerId“ für die TSE zulässig", runCatching { EpsonTse.validateClientId(registerId) }.isSuccess)

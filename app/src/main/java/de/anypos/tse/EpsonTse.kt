@@ -56,7 +56,7 @@ class EpsonTse(
     private val clock: () -> Long = System::currentTimeMillis,
     /** Wartezeit der TSE je Kommando (ePOS `<timeout>`). */
     private val commandTimeoutMs: Int = TseTransport.DEFAULT_TIMEOUT_MS,
-    /** Verbindung per TLS? Ohne TLS ginge die TimeAdmin-PIN im Klartext über das Netz. */
+    /** Verbindung abhörsicher (TLS oder USB-Kabel)? Sonst ginge die TimeAdmin-PIN im Klartext über das Netz. */
     val encrypted: Boolean = true,
     /** Gerät nach jeder Aktion freigeben (empfohlen, solange andere Anwendungen denselben Drucker nutzen). */
     private val releaseAfterUse: Boolean = true,

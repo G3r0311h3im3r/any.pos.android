@@ -19,6 +19,7 @@ import de.anypos.hardware.PrinterService
 import de.anypos.hardware.Company
 import de.anypos.tse.ClientIdStore
 import de.anypos.tse.EposXmlSocketTransport
+import de.anypos.tse.EscPosTseTransport
 import de.anypos.tse.EpsonTse
 import de.anypos.tse.NoTse
 import de.anypos.tse.ReadOnlyGuardTransport
@@ -27,11 +28,13 @@ import de.anypos.tse.TlsPinning
 import de.anypos.tse.Tse
 import de.anypos.tse.TseCredentials
 import de.anypos.tse.TseLoginException
+import de.anypos.tse.UsbByteLink
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withTimeoutOrNull
 import javax.net.SocketFactory
 
@@ -53,7 +56,11 @@ class AppContainer(context: Context, private val restoredFrom: String? = null) {
     val db = PosDatabase.build(context)
     val settings = SettingsRepository(db.settings(), scope)
     val audit = AuditLog(db.audit())
-    val printer = PrinterService(context.applicationContext, settings)
+    private val appContext = context.applicationContext
+
+    /** Bondruck und TSE-Zugang über das USB-Kabel nutzen dieselbe Leitung: immer nur einer zur Zeit. */
+    private val printerLine = Mutex()
+    val printer = PrinterService(appContext, settings, printerLine)
     val backup = BackupService(context.applicationContext, db, settings, audit)
 
     private var tseConfig: String? = null
@@ -73,6 +80,9 @@ class AppContainer(context: Context, private val restoredFrom: String? = null) {
     fun tseHost(): String = settings[Key.TSE_HOST].ifBlank { settings[Key.PRINTER_HOST] }
 
     fun tseTls(): Boolean = settings[Key.TSE_TLS] != "false"
+
+    /** Weg zur TSE im Drucker: "usb" (ESC/POS über das Druckerkabel) oder "tcp" (ePOS Device XML); leer = wie der Drucker. */
+    fun tseConnection(): String = settings[Key.TSE_CONNECTION].ifBlank { if (settings[Key.PRINTER_MODE] == "usb") "usb" else "tcp" }
 
     /** Port: eigener Eintrag oder 8143 (TLS) bzw. 8009 (ohne TLS). */
     fun tsePort(): Int = settings[Key.TSE_PORT].toIntOrNull() ?: if (tseTls()) 8143 else 8009
@@ -99,7 +109,12 @@ class AppContainer(context: Context, private val restoredFrom: String? = null) {
         val port = tsePort()
         val tls = tseTls()
         val fingerprint = settings[Key.TSE_TLS_FINGERPRINT]
-        val config = if (mode == "epson") "epson|$host|$port|$tls|$fingerprint" else mode
+        val usb = tseConnection() == "usb"
+        val config = when {
+            mode != "epson" -> mode
+            usb -> "epson|usb"
+            else -> "epson|$host|$port|$tls|$fingerprint"
+        }
         if (config != tseConfig) {
             (tseInstance as? EpsonTse)?.let { old -> runBlocking(Dispatchers.IO) { withTimeoutOrNull(3_000) { old.shutdown() } } }
             tseInstance = when (mode) {
@@ -111,17 +126,22 @@ class AppContainer(context: Context, private val restoredFrom: String? = null) {
                 }
                 "epson" -> EpsonTse(
                     ReadOnlyGuardTransport(
-                        EposXmlSocketTransport(
-                            host, port,
-                            socketFactory = if (tls) TlsPinning.pinnedSocketFactory(fingerprint) else SocketFactory.getDefault(),
-                            clientIdStore = tseClientIds,
-                        ),
+                        if (usb) {
+                            EscPosTseTransport(UsbByteLink(appContext), deviceLock = printerLine)
+                        } else {
+                            EposXmlSocketTransport(
+                                host, port,
+                                socketFactory = if (tls) TlsPinning.pinnedSocketFactory(fingerprint) else SocketFactory.getDefault(),
+                                clientIdStore = tseClientIds,
+                            )
+                        },
                         writeEnabled = { settings[Key.TSE_WRITE_ENABLED] == "true" },
                         onBlocked = { function -> audit.log("System", "TSE_SCHREIBSPERRE", "$function abgewiesen") },
                     ),
                     clientId = { settings[Key.REGISTER_ID] },
                     credentials = ::tseCredentials,
-                    encrypted = tls,
+                    // USB ist eine direkte Leitung, die PIN geht dort nicht über ein Netz
+                    encrypted = usb || tls,
                 )
                 else -> NoTse()
             }

@@ -67,18 +67,22 @@ fun TseEpsonSection(container: AppContainer, user: User, onMessage: (String) -> 
         container.audit.log(user.name, "TSE_EINSTELLUNG", auditDetails)
     }
 
+    // Gespeicherte Einstellung (nicht die noch ungespeicherte Auswahl darüber)
+    val usb = values.let { (it[Key.TSE_CONNECTION.name].orEmpty()).ifBlank { if (it[Key.PRINTER_MODE.name] == "usb") "usb" else "tcp" } } == "usb"
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("TSE-Host: ${container.tseHost()}:${container.tsePort()} ${if (tlsOn) "(TLS)" else "(UNVERSCHLÜSSELT)"} – Host/Port nach „Speichern“ wirksam",
+        if (usb) Text("TSE über USB (ESC/POS über das Druckerkabel) – Verbindung nach „Speichern“ wirksam", style = MaterialTheme.typography.bodySmall)
+        else Text("TSE-Host: ${container.tseHost()}:${container.tsePort()} ${if (tlsOn) "(TLS)" else "(UNVERSCHLÜSSELT)"} – Host/Port nach „Speichern“ wirksam",
             style = MaterialTheme.typography.bodySmall)
 
-        // --- TLS
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        // --- TLS (nur Netzwerk)
+        if (!usb) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Switch(checked = tlsOn, onCheckedChange = { on ->
                 if (!on) confirmPlain = true else scope.launch { setting(Key.TSE_TLS, "true", "TLS ein") }
             })
             if (tlsOn) Text("Verschlüsselt (TLS)") else Text("Ohne TLS – nur für Mock/Development-TSE", color = Danger, fontWeight = FontWeight.Bold)
         }
-        if (tlsOn) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (!usb && tlsOn) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedButton(enabled = epson && !busy, onClick = {
                 run { offeredCert = TlsPinning.fetchCertificate(container.tseHost(), container.tsePort()) }
             }) { Text(if (fingerprint.isEmpty()) "Zertifikat des Druckers bestätigen" else "Zertifikat neu bestätigen") }

@@ -110,7 +110,16 @@ fun SettingsScreen(container: AppContainer, user: User) {
         Text("Ohne zertifizierte TSE ist kein steuerlich zulässiger Betrieb möglich. Die Simulation erzeugt ungültige Belege und dient nur Tests/Schulung.",
             style = MaterialTheme.typography.bodySmall)
         if (v(Key.TSE_MODE) == "epson") {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Verbindung (die TSE steckt im Drucker)")
+            choice(Key.TSE_CONNECTION, listOf("usb" to "USB (über den Drucker)", "tcp" to "Netzwerk"))
+            val usbTse = v(Key.TSE_CONNECTION).ifBlank { if (v(Key.PRINTER_MODE) == "usb") "usb" else "tcp" } == "usb"
+            if (v(Key.TSE_CONNECTION).isBlank()) {
+                Text("Nicht gewählt – es gilt die Druckereinstellung: ${if (usbTse) "USB" else "Netzwerk"}", style = MaterialTheme.typography.bodySmall)
+            }
+            if (usbTse) {
+                Text("Über das USB-Kabel des Druckers; kein Host, kein Zertifikat nötig. Drucker auf „USB“ stellen.",
+                    style = MaterialTheme.typography.bodySmall)
+            } else FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 field(Key.TSE_HOST, "TSE-Host (leer = Drucker-IP)"); field(Key.TSE_PORT, "Port (leer = Standard)", 200)
             }
             TseEpsonSection(container, user) { message = it }

@@ -121,7 +121,7 @@ fun AppRoot(container: AppContainer) {
 fun TseBanner(container: AppContainer) {
     val values by container.settings.values.collectAsState()
     val mode = values[Key.TSE_MODE.name] ?: Key.TSE_MODE.default
-    val tseHost = listOf(Key.TSE_HOST, Key.TSE_PORT, Key.TSE_TLS, Key.TSE_TLS_FINGERPRINT).map { values[it.name] }
+    val tseHost = listOf(Key.TSE_CONNECTION, Key.PRINTER_MODE, Key.TSE_HOST, Key.TSE_PORT, Key.TSE_TLS, Key.TSE_TLS_FINGERPRINT).map { values[it.name] }
     val status by produceState<TseStatus?>(null, mode, tseHost, values[Key.PRINTER_HOST.name]) {
         // regelmäßig aktualisieren, sonst bleibt ein alter Fehler stehen
         while (true) {

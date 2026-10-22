@@ -96,7 +96,7 @@ Tse (Interface, vorhanden)
  └── EpsonTse                – JSON-Kommandos, Login/Zeit-Zustandsmaschine, Fehlerbehandlung, readOnly-Guard
       └── TseTransport       – connect() / open() / operate(json, timeout) / close() / disconnect()
            ├── EposXmlSocketTransport   – Netzwerk: TCP 8143 (TLS) / 8009, reiner Socket-Code, keine SDK-Abhängigkeit   (fertig)
-           └── EposSdkUsbTransport      – USB: Epson ePOS SDK for Android (Epos2GermanyFiscalElement, Target "USB:")   (Schritt 8b)
+           └── EscPosTseTransport       – USB: ESC/POS über das Druckerkabel (ByteLink: UsbByteLink, im Test SocketByteLink)   (Schritt 8b)
 ```
 
 **Beide Wege werden unterstützt** (Entscheidung 22.10.2026): Vor Ort hängt der Drucker per **USB** am Tablet,
@@ -107,14 +107,18 @@ andere Installationen betreiben ihn im **Netzwerk**. Die Einstellung `TSE_CONNEC
 - **Die TSE steckt immer im Drucker** (USB-TSE oder microSD-TSE mit Adapter OT-UH30 im USB-Port des Druckers);
   der Drucker ist der TSE-Host. Eine TSE direkt am Android-Gerät ist laut Developer's Guide (Kap. 4) kein
   unterstützter Host.
-- USB: kein TLS, kein Zertifikat, kein Host/Port; das SDK übernimmt Verbindung und Wiedereinstieg. Da Bondruck und
-  TSE über **dasselbe USB-Gerät** laufen, darf nur einer der beiden zugleich zugreifen: Der Bondruck läuft bei
-  `TSE_CONNECTION = usb` ebenfalls über das ePOS SDK (`Printer`) oder wird mit dem TSE-Zugriff über eine gemeinsame
-  Sperre koordiniert (am echten Gerät zu klären, Schritt 9).
+- USB: **ESC/POS statt ePOS SDK** (Entscheidung 22.10.2026): Laut Developer's Guide Kap. 5 unterstützt der Drucker
+  als TSE-Host auch ESC/POS; der Ablauf stammt aus der offiziellen EpsonTseDemo 2.4.1 (`TSEAccessByEscPosNetwork`/
+  `…Serial`). Kein proprietäres SDK, keine Lizenzfrage, dieselbe USB-Leitung wie der Bondruck. Kein TLS, kein
+  Zertifikat, kein Host/Port. Bondruck und TSE teilen sich die Leitung über eine **gemeinsame Sperre** (`printerLine`
+  in `AppContainer`, `PrinterService`): Die TSE hält sie von der Freischaltung bis zur Freigabe, also je Aktion.
+  Restrisiko: Das ESC/POS-Protokoll ist nur durch den Demo-Quelltext belegt; Schritt 9 bestätigt es am TM-m30III.
+  Ausweichweg: ePOS SDK for Android (Download durch den Betreiber/Entwickler nach Lizenzzustimmung).
 - Strom: Vor Ort lädt der **TM-m30III** das Tablet über dasselbe USB-C-Kabel (Power Delivery) – ein Kabel für
   Strom, Druck und TSE. Drucker ohne Ladefunktion brauchen einen USB-C-Hub mit Power Delivery.
-- Der Mock-Server (unten) spricht ePOS Device XML über TCP → Entwicklung und Tests laufen über den Netzwerk-Weg;
-  der USB-Transport wird über eine dünne Hülle um das SDK getestet (Fake des SDK-Objekts) und an echter Hardware.
+- Der Mock spricht beide Protokolle: ePOS Device XML (`MockTseServer`) und ESC/POS (`MockEscPosServer`, über TCP
+  statt USB; Konsole `--escpos` → Port 9100). Derselbe `EscPosTseTransport` läuft im Test über `SocketByteLink`,
+  in der App über `UsbByteLink`.
 
 ### Drei Schutzschichten gegen die Produktiv-TSE
 
@@ -180,7 +184,7 @@ Dialog „TSE übernehmen“ abgefragt.
 | 6 | `startTransaction`/`finishTransaction`, Hintergrund-Coroutine, Wiederanlauf über `GetStartedTransactionList`; **mit Tests:** Normalablauf, 512 offene Tx, Abbruch vor/nach Ausführung | `tse/EpsonTse.kt`, ggf. `domain/PosService.kt` | ja |
 | 7 | Admin-Dialog „TSE übernehmen“: Admin-Login, `GetRegisteredClientList` (nur mit Admin), optional `RegisterSecretKey`, `RegisterClient(REGISTER_ID)`, `LogOutForAdmin`; PIN nur im Dialog | `ui/SettingsScreen.kt`, `tse/EpsonTse.kt` | ja |
 | 8 | TAR-Export (Admin-Login → `UpdateTime` → `ArchiveExport` → `GetExportData` → `FinalizeExport{deleteData:false}`) in den DSFinV-K-Export. **Sperrt die TSE während des Exports** – nur außerhalb der Öffnungszeiten und nie, solange JTL-POS produktiv an derselben TSE arbeitet | `tse/EpsonTse.kt`, `export/ExportService.kt` | ja (Admin, Exportmodus) |
-| 8b | **USB-Weg:** ePOS SDK for Android einbinden (`.aar` aus dem Epson-Download, Lizenz prüfen, nicht aus `downloads/` einchecken ohne Klärung), `EposSdkUsbTransport` (`Epos2GermanyFiscalElement.connect("USB:…")`, `operate(json, timeout)`, Ergebnis über `ReceiveListener`, unbekanntes Ergebnis → `TseResultUnknownException`), Einstellung `TSE_CONNECTION`, Druck bei USB über das SDK bzw. gemeinsame Sperre mit dem TSE-Zugriff, USB-Berechtigung. Tests mit Fake des SDK-Objekts | `tse/EposSdkUsbTransport.kt`, `AnyPosApp.kt`, `ui/TseSettings.kt`, `hardware/…` | nein |
+| 8b | **USB-Weg per ESC/POS:** `EscPosTseTransport` über `ByteLink` (`UsbByteLink` Bulk-OUT/-IN, `SocketByteLink` für Tests), gemeinsame Sperre mit dem Bondruck, Einstellung `TSE_CONNECTION`, USB-Berechtigung, ESC/POS-Zugang im Mock | `tse/EscPosTseTransport.kt`, `tse/ByteLink.kt`, `tse/UsbByteLink.kt`, `hardware/PrinterService.kt`, `AnyPosApp.kt`, `ui/…`, `tse-mock/…/MockEscPosServer.kt` | nein |
 | 9 | **Phase 2a an der echten Hardware** (über den Weg, der vor Ort genutzt wird – derzeit **USB**): nur Schritt 3 mit `readOnly`; Ergebnis von `GetStorageInfo` (und `GetStartedTransactionList`) → in `TSE-Plan.md` dokumentieren. Das Gerät wird nach jedem Aufruf freigegeben, damit JTL-POS nicht blockiert wird. Registrierte Clients und Secret-Prüfung sind **keine** reinen Lesezugriffe (Admin-Login bzw. Anmeldeversuch) → erst nach Freigabe des Betreibers | – | nein |
 | 10 | **Erst nach dem Umzug** (JTL-POS endgültig außer Betrieb, keine offenen JTL-Transaktionen mehr): eigenes Shared Secret statt `EPSONKEY` (`RegisterSecretKey`, Admin), danach im Kassen-Dialog „Shared Secret setzen“. Die Abmeldung von JTL-POS an der TSE ist beim Betreiber bereits vorbereitet und erfolgt durch ihn im Rahmen des Umzugs – Any.POS führt kein `DeregisterClient` aus. Grund für die Reihenfolge: Das Secret gilt für den **ganzen Drucker** – eine Änderung während JTL noch läuft, sperrt JTL-POS aus (Entscheidung 22.10.2026) | `tse/EpsonTse.kt`, `ui/TseTakeoverDialog.kt` | ja (Admin) |
 
@@ -200,6 +204,7 @@ Schritte 1–4 brauchen keine Hardware. Schritt 9 ist der erste Kontakt mit der 
 | 6b | erledigt 22.10.2026 nach Recherche (DSFinV-K 2.4 Kap. 2.1/Anhang B, AEAO Nr. 1.12.2.4, Herstellerpraxis): Jede verwaiste Transaktion wird zusätzlich als **eigener Vorgang `AVBelegabbruch`** in der Kasse angelegt (fortlaufende Nummer, ohne Positionen/Zahlung, Bediener „System“, `TSE_TA_FEHLER` = Hinweis auf Wiederanlauf, Startzeit leer), damit sie in der DSFinV-K erkennbar ist. Abgleich auch **vor jedem Kassenabschluss**. `TSE_TA_FEHLER` wird exportiert. Transport verbindet beim Öffnen einmal neu, wenn die Verbindung inzwischen tot ist (noch nichts gesendet). Verfahrensdokumentation: `docs/TSE-Wiederanlauf.md`. 145 Tests. |
 | 7 | erledigt 22.10.2026: `EpsonTse.asAdmin(pin) { … }` – Admin-Sitzung je Aktion (Challenge-Hash, Aktion, **immer** `LogOutForAdmin`); Admin-PIN nur als Parameter, nie gespeichert/protokolliert; abgelehnte PIN wird kein zweites Mal gesendet, `remainingRetries` wird angezeigt. Aktionen: registrierte Kassen lesen, `registerClient` (vorher Prüfung der Kassen-ID nach Spez.: PrintableString, kein „_“, kein „EPSON“; nur wenn noch nicht registriert), Self-Test mit Erkennung „anderer Host“, `SetUpForPrinter` (nur dann, eigene Rückfrage). Dialog „TSE übernehmen“: Voraussetzungen, Pflicht-Freigabe des Betreibers (Name/Datum ins Protokoll), Admin-PIN, Aktionen, Bereitschaftsprüfung, Hinweis Mock/echte TSE. Kein `SetUp`, kein `RegisterSecretKey` (→ Schritt 10, nach dem Umzug), kein Löschen. 8 Tests (`EpsonTseAdminTest`), insgesamt 153. Im Emulator gegen Mock „von JTL eingerichtet“: Kassen gelesen (`JTL-POS-1`), `KASSE-01` registriert, Bereitschaft (Self-Test, Anmeldung, Zeit) in Ordnung; jede Admin-Sitzung abgemeldet. |
 | 8 | erledigt 22.10.2026: `EpsonTse.exportTar(adminPin, out, from?, to?)` – vorher Zeit sicherstellen (Spez. S. 45), dann Admin-Sitzung: `ArchiveExport` (gesamter Speicher) bzw. `ExportFilteredByPeriodOfTime` (Monat), jeweils `clientId ""` = alle Kassen; `GetExportData` bis `EXPORT_COMPLETE` (bei `EXPORT_INCOMPLETE_SEARCHING` kurz warten, max. 5 min), Daten **direkt in die Datei** (kein Zwischenspeicher), SHA-256 mitlaufend; `FinalizeExport{deleteData:false}` – es wird **nie** gelöscht; bei jedem Fehler `CancelExport`, damit die TSE nicht im Exportmodus hängen bleibt; immer `LogOutForAdmin`. Dialog „TSE-Daten exportieren“: Umfang (gesamt/Monat), Pflicht-Freigabe, Bestätigung „es wird nicht kassiert“, Admin-PIN, Speicherort per Android-Dateiauswahl; kein Export bei offenem Vorgang; unvollständige Datei wird gelöscht; Größe und SHA-256 ins Protokoll (`TSE_EXPORT`). Kein automatischer Export (Admin-PIN wird nie gespeichert). 5 Tests (`EpsonTseExportTest`), insgesamt 158. Im Emulator: TAR gespeichert, SHA-256 der Datei stimmt mit der Anzeige überein, mit `tar -t` lesbar. |
+| 8b | erledigt 22.10.2026: `EscPosTseTransport` (Freischalten `10 14 06 01 03 …`, JSON in `1C 28 50 pL pH 49 00 00 00`, Antwortblöcke `53 27` mit Quittung `06` bis Status `40`, Freigeben `10 14 06 01 01 …`; Statusbytes dazwischen werden übersprungen; alte Bytes vor dem Freischalten verworfen; max. 64 KB; Abbruch/keine Antwort nach dem Senden → `TseResultUnknownException`, danach Wartezeit bis der Drucker die TSE freigibt (60 s wie Epson-Demo); belegt → bis zu 25 Versuche, „sicher nicht ausgeführt“). `UsbByteLink` (gleiche Geräteerkennung und Berechtigung wie der Bondruck, zusätzlich Bulk-IN; abgezogenes Kabel = Abbruch). Gemeinsame Sperre `printerLine` für Druck und TSE. `TSE_CONNECTION` (`usb`/`tcp`, leer = wie Drucker), Oberfläche „Verbindung: USB (über den Drucker) / Netzwerk“, bei USB ohne Host/TLS/Zertifikat; Übernahme-Dialog akzeptiert USB ohne Zertifikat. Mock: `MockEscPosServer` (Blöcke, Statusbytes, Sperre nach Abbruch, Störungen), Konsole `--escpos`. 11 Tests (`EscPosTseTransportTest`: Protokoll, Sperre, Wartezeit beim Drucken, Größe, Abbruch/keine Antwort, Drucker weg, Verkauf, Wiederherstellung ohne erneutes Senden, Schreibschutz, TAR-Export), insgesamt 169. Im Emulator: Umschalten USB ↔ Netzwerk ohne Neustart, bei USB Meldung „Kein USB-Drucker gefunden“. Am echten TM-m30III zu prüfen (Schritt 9): Antwortformat, Freigabe nach Abbruch, gleichzeitiger Statusrückkanal. |
 
 ## Offene Punkte (vor Schritt 7 klären)
 
@@ -217,10 +222,9 @@ Schritte 1–4 brauchen keine Hardware. Schritt 9 ist der erste Kontakt mit der 
 - Admin-PIN / PUK der TSE: liegen beim Betreiber? Siehe `TSE-Umzug-Betreiber.md`.
 - ~~LAN oder USB?~~ Entschieden 22.10.2026: **beide Wege**; vor Ort USB (Drucker und TSE per USB, TSE im
   Drucker) → Schritt 8b vor Schritt 9. Geklärt 22.10.2026: Drucker **TM-m30III**, USB-TSE steckt im Drucker,
-  Tablet lädt über den Drucker (USB-C PD). Offen am Gerät: gleichzeitiger Zugriff Druck/TSE über ein USB-Gerät;
-  der Developer's Guide Rev. B nennt als Hosts nur TM-m30/II und TM-T88VI-iHub – dass der TM-m30III als TSE-Host
-  per SDK antwortet, bestätigt Schritt 9 (`GetStorageInfo`); vorab in neueren Epson-Unterlagen/SDK-Versionshinweisen
-  nachsehen.
+  Tablet lädt über den Drucker (USB-C PD). Umgesetzt mit ESC/POS (Schritt 8b). Der Developer's Guide Rev. B nennt
+  als Hosts nur TM-m30/II und TM-T88VI-iHub – dass der TM-m30III per ESC/POS über USB antwortet, bestätigt
+  Schritt 9 (`GetStorageInfo`).
 - Development-TSE bestellt? Lieferzeit?
 
 ## Quellen
@@ -228,5 +232,5 @@ Schritte 1–4 brauchen keine Hardware. Schritt 9 ist der erste Kontakt mit der 
 - Epson TSE Developer's Guide Rev. 1.0.1: https://download4.epson.biz/sec_pubs/bs/pdf/GermanFiscal_TSE_Developers_Guide_en_RevB.pdf
 - Epson TSE Documents and Software (Treiber, JSON-Spezifikation, EpsonTSEDemo mit C++-Quellcode):
   https://www.epson.eu/fr_EU/support/sc/fiscal-tse-for-germany/s/s3557
-- Epson ePOS SDK for Android: https://download.epson-biz.com/modules/pos/
+- Epson ePOS SDK for Android (nur Ausweichweg für USB): https://download.epson-biz.com/modules/pos/
 - BSI TR-03153 / TR-03151, DSFinV-K 2.x (BZSt)
