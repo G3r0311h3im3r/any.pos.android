@@ -29,6 +29,8 @@ import de.anypos.hardware.ReceiptDocument
 import de.anypos.payment.CardPaymentRequest
 import de.anypos.payment.CardPaymentResult
 import de.anypos.payment.CardTerminals
+import de.anypos.payment.SumUpSwitch
+import de.anypos.payment.SumUpSwitchBridge
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -68,13 +70,6 @@ class PosViewModel(private val c: AppContainer, private val user: User) : ViewMo
     var continuePayment by mutableStateOf<PayKind?>(null)
     private var paid by mutableStateOf<DisplayState.Paid?>(null)
 
-    init {
-        // Kundendisplay: jeden Zustandswechsel sofort veröffentlichen
-        viewModelScope.launch { snapshotFlow { displayState() }.collect { c.customerDisplay.publish(it) } }
-        viewModelScope.launch {
-            c.customerDisplay.choices.collect { ch -> if (ch.askId == tipRequest?.askId) tipCustomerChoice = ch.optionId }
-        }
-    }
 
     override fun onCleared() {
         c.customerDisplay.publish(DisplayState.Idle(shop()))
@@ -84,7 +79,11 @@ class PosViewModel(private val c: AppContainer, private val user: User) : ViewMo
 
     private fun displayState(): DisplayState {
         tipRequest?.let { return DisplayState.TipAsk(shop(), it.askId, it.baseCents, it.options, tipCustomerChoice) }
-        if (!cart.isEmpty) return DisplayState.Basket(shop(), cart.lines.map { it.toDisplay(it.key == selectedLineKey) }, cart.totalCents)
+        switchPending?.takeIf { it.onDisplay }?.let { return DisplayState.CardPay(shop(), it.request.amountCents, it.link, it.nonce, it.opened) }
+        if (!cart.isEmpty) return DisplayState.Basket(
+            shop(), cart.lines.map { it.toDisplay(it.key == selectedLineKey) }, cart.totalCents,
+            notice = if (cardFailed != null || cardUnknown != null) "Kartenzahlung nicht abgeschlossen – bitte an der Kasse melden." else null,
+        )
         return paid ?: DisplayState.Idle(shop())
     }
 
@@ -272,9 +271,13 @@ class PosViewModel(private val c: AppContainer, private val user: User) : ViewMo
 
     // --- Kartenzahlung (Terminal)
 
-    /** Eingestelltes Terminal; SumUp nur, wenn es in diesem Build enthalten ist (sonst wie „ohne Terminal“). */
+    /** Eingestelltes Terminal; SumUp nur, wenn enthalten bzw. freigeschaltet (sonst wie „ohne Terminal“). */
     private val terminal get() = c.settings[Key.CARD_TERMINAL].let {
-        if (it == CardTerminals.SUMUP && !SumUpSupport.AVAILABLE) CardTerminals.NONE else it
+        when {
+            it == CardTerminals.SUMUP && !SumUpSupport.AVAILABLE -> CardTerminals.NONE
+            it in CardTerminals.switch && !CardTerminals.SWITCH_ENABLED -> CardTerminals.NONE
+            else -> it
+        }
     }
 
     /** Laufender Auftrag ans Terminal; die Kassenansicht startet damit das Gerät (SumUp bzw. Simulation). */
@@ -335,16 +338,42 @@ class PosViewModel(private val c: AppContainer, private val user: User) : ViewMo
             message = "Kartenzahlung am Terminal erst ab ${Money.formatEur(CardTerminals.MIN_AMOUNT_CENTS)} – bitte bar zahlen."
             return
         }
+        // SumUp-App: Voraussetzungen vor dem Speichern des Versuchs prüfen (sonst entstünde ein sinnloser Versuch)
+        val key = c.settings[Key.SUMUP_AFFILIATE_KEY].trim()
+        val displayUrl = c.customerDisplayUrl()
+        if (terminal in CardTerminals.switch && key.isEmpty()) { message = "SumUp-Affiliate-Key fehlt (Einstellungen → Kartenzahlung)."; return }
+        if (terminal == CardTerminals.SUMUP_DISPLAY && displayUrl == null) {
+            message = "Das Kundendisplay ist nicht eingeschaltet oder ohne Netzwerkadresse – Zahlung am Display nicht möglich."
+            return
+        }
         busy = true
         viewModelScope.launch {
             try {
                 cardOthers = others; cardChange = change; cardAmount = amount
-                cardRequest = c.cards.begin(open, amount, tip, terminal, user.name)
+                val request = c.cards.begin(open, amount, tip, terminal, user.name)
+                if (terminal in CardTerminals.switch) {
+                    val nonce = SumUpSwitch.newNonce()
+                    val onDisplay = terminal == CardTerminals.SUMUP_DISPLAY
+                    val callback = if (onDisplay) "$displayUrl/sumup/$nonce" else "${SumUpSwitch.APP_CALLBACK}/$nonce"
+                    val link = SumUpSwitch.startUri(key, amount, request.title, request.reference, callback)
+                    c.sumupSwitch.begin(request, nonce, link, onDisplay)
+                }
+                cardRequest = request
             } catch (e: Exception) {
                 message = e.message
                 busy = false
             }
         }
+    }
+
+    /** Laufende Zahlung über die SumUp-App (für Display-Anzeige und Kassen-Dialog). */
+    var switchPending by mutableStateOf<SumUpSwitchBridge.Pending?>(null)
+        private set
+
+    /** Kassierer bricht eine Zahlung über die SumUp-App ab bzw. es kam keine Rückmeldung. */
+    fun abandonSwitch(reason: String) {
+        val request = cardRequest ?: return
+        c.sumupSwitch.abandon(request.attemptId, reason)
     }
 
     /** Ergebnis vom Terminal (SumUp-SDK oder Simulation). */
@@ -448,4 +477,18 @@ class PosViewModel(private val c: AppContainer, private val user: User) : ViewMo
         ReceiptDocument.toText(ReceiptDocument.receipt(c.company(), r), c.printer.columns)
 
     fun totalText() = Money.formatEur(cart.totalCents)
+
+    // Erst hier starten: Die Abläufe lesen sofort Zustände, die oben deklariert sind (Reihenfolge der Initialisierung)
+    init {
+        // Kundendisplay: jeden Zustandswechsel sofort veröffentlichen
+        viewModelScope.launch { snapshotFlow { displayState() }.collect { c.customerDisplay.publish(it) } }
+        viewModelScope.launch {
+            c.customerDisplay.choices.collect { ch -> if (ch.askId == tipRequest?.askId) tipCustomerChoice = ch.optionId }
+        }
+        // SumUp-App: Rückruf (über App oder Display-Server) → Ergebnis des laufenden Versuchs
+        viewModelScope.launch { c.sumupSwitch.pending.collect { switchPending = it } }
+        viewModelScope.launch {
+            c.sumupSwitch.results.collect { (attemptId, result) -> if (attemptId == cardRequest?.attemptId) onCardResult(result) }
+        }
+    }
 }

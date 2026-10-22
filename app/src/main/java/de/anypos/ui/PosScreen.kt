@@ -197,8 +197,10 @@ fun PosScreen(container: AppContainer, user: User) {
 
     // --- Kartenterminal
     vm.cardRequest?.let { request ->
-        when (container.settings[SettingKey.CARD_TERMINAL]) {
+        when (container.settings[SettingKey.CARD_TERMINAL].takeIf { CardTerminals.SWITCH_ENABLED || it !in CardTerminals.switch }) {
             CardTerminals.SIMULATED -> SimulatedTerminalDialog(request) { vm.onCardResult(it) }
+            CardTerminals.SUMUP_DISPLAY -> vm.switchPending?.let { SwitchDisplayDialog(it) { vm.abandonSwitch("vom Kassierer abgebrochen") } }
+            CardTerminals.SUMUP_TABLET -> vm.switchPending?.let { SwitchTabletLauncher(container, it) }
             else -> CardTerminalLauncher(container, request) { vm.onCardResult(it) }
         }
     }

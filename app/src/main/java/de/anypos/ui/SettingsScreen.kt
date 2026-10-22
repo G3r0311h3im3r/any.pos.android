@@ -33,6 +33,7 @@ import de.anypos.AppContainer
 import de.anypos.data.Role
 import de.anypos.data.User
 import de.anypos.domain.Key
+import de.anypos.payment.CardTerminals
 import de.anypos.domain.PinHasher
 import de.anypos.hardware.UsbPrinterTransport
 import kotlinx.coroutines.launch
@@ -108,9 +109,23 @@ fun SettingsScreen(container: AppContainer, user: User) {
         Text("Kartenzahlung", style = MaterialTheme.typography.titleMedium)
         choice(Key.CARD_TERMINAL, listOfNotNull(
             "none" to "ohne Terminal (nur buchen)",
+            ("sumup_display" to "SumUp-App am Kundendisplay (Tap to Pay)").takeIf { CardTerminals.SWITCH_ENABLED },
+            ("sumup_tablet" to "SumUp-App auf diesem Tablet").takeIf { CardTerminals.SWITCH_ENABLED },
             ("sumup" to "SumUp (Solo, Solo Lite)").takeIf { SumUpSupport.AVAILABLE },
             "simulated" to "Simulation (nur Test!)",
         ))
+        if (CardTerminals.SWITCH_ENABLED && v(Key.CARD_TERMINAL) in CardTerminals.switch) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { field(Key.SUMUP_AFFILIATE_KEY, "SumUp Affiliate Key", 380) }
+            Text(
+                if (v(Key.CARD_TERMINAL) == "sumup_display")
+                    "Das Smartphone am Kundendisplay braucht die SumUp-App (angemeldet, Tap to Pay eingerichtet) und NFC. Der Kunde " +
+                        "tippt am Display auf „Mit Karte zahlen“, die SumUp-App übernimmt, danach kommt das Ergebnis an die Kasse. " +
+                        "Kundendisplay muss eingeschaltet sein. Handy in eine Halterung und Bildschirm anheften."
+                else "Die SumUp-App muss auf diesem Tablet installiert und angemeldet sein (Lesegerät dort koppeln). " +
+                    "Im Kioskmodus (Geräteeigentümer) wird die SumUp-App automatisch zugelassen.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
         Text("Die Simulation zeigt den Ablauf mit Terminal (genehmigt, abgelehnt, abgebrochen, Status unbekannt) ohne Gerät.",
             style = MaterialTheme.typography.bodySmall)
         if (SumUpSupport.AVAILABLE && v(Key.CARD_TERMINAL) == "sumup") {

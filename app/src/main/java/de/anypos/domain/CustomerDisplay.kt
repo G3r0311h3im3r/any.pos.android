@@ -28,7 +28,11 @@ sealed interface DisplayState {
 
     data class Idle(override val shop: String) : DisplayState
 
-    data class Basket(override val shop: String, val lines: List<DisplayLine>, val totalCents: Long) : DisplayState
+    /** [notice]: Hinweis an den Kunden, z. B. nach einer abgelehnten Kartenzahlung. */
+    data class Basket(override val shop: String, val lines: List<DisplayLine>, val totalCents: Long, val notice: String? = null) : DisplayState
+
+    /** Kartenzahlung über die SumUp-App auf dem Display-Smartphone: Kunde tippt [link], zahlt per Tap to Pay. */
+    data class CardPay(override val shop: String, val amountCents: Long, val link: String, val nonce: String, val opened: Boolean) : DisplayState
 
     data class TipAsk(
         override val shop: String,
@@ -82,6 +86,7 @@ class CustomerDisplayHub {
                 is DisplayState.Basket -> {
                     put("mode", "cart")
                     put("total", Money.formatEur(s.totalCents))
+                    put("notice", s.notice)
                     putJsonArray("lines") {
                         s.lines.forEach { l ->
                             addJsonObject {
@@ -110,6 +115,13 @@ class CustomerDisplayHub {
                             }
                         }
                     }
+                }
+                is DisplayState.CardPay -> {
+                    put("mode", "card")
+                    put("total", Money.formatEur(s.amountCents))
+                    put("link", s.link)
+                    put("nonce", s.nonce)
+                    put("opened", s.opened)
                 }
                 is DisplayState.Paid -> {
                     put("mode", "paid")

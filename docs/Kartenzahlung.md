@@ -69,6 +69,25 @@ Tap to Pay (Smartphone/Tablet als Terminal) ist ein eigenes SumUp-SDK mit Zugang
 - Später möglich: Status bei „unbekannt“ automatisch über die SumUp-API abfragen, automatische Erstattung,
   Offline-Zahlungen (Solo Lite, Freischaltung durch SumUp).
 
+## SumUp-App per Payment Switch (vorbereitet, zurückgestellt)
+
+Ohne SDK: Die Kasse übergibt Betrag und Referenz an die **SumUp-App** (`sumupmerchant://pay/1.0?…`, nur Affiliate Key
+nötig), die SumUp-App ruft mit dem Ergebnis zurück. Zwei Varianten:
+
+- **am Kundendisplay** (Smartphone mit NFC, Tap to Pay): Display zeigt „Mit Karte zahlen“, der Kunde tippt, die
+  SumUp-App übernimmt; Rückruf an den Display-Server `…/d/<schlüssel>/sumup/<einmalcode>`.
+- **auf diesem Tablet** (z. B. Solo per Bluetooth an der SumUp-App): Rückruf `anypos://sumup-callback/<einmalcode>`.
+
+Absicherung: Einmal-Code je Versuch im Rückruf, Referenz muss passen, Erfolg nur mit Transaktionscode; kein Rückruf
+→ „unbekannt“ (am Display: nie geöffnet → „abgebrochen“). Code: `payment/SumUpSwitch.kt`, `ui/SumUpSwitchUi.kt`,
+Display-Seite Modus `card`; Tests `SumUpSwitchTest`.
+
+**Test 22.10.2026** (Kasse im Emulator, Smartphone als Kundendisplay): Display-Taste, Öffnen der SumUp-App und Rückruf
+an die Kasse funktionierten. Die SumUp-App lehnte jedoch alle vorgehaltenen Karten per Tap to Pay mit „Karte nicht
+unterstützt“ ab. Deshalb **zurückgestellt**: `CardTerminals.SWITCH_ENABLED = false` blendet die Auswahl aus; auf `true`
+setzen, um sie wieder anzubieten. Vorher mit SumUp klären, warum Tap to Pay die Karten ablehnt (Kartenarten,
+Freischaltung von Tap to Pay im Konto, Gerät).
+
 ### Voraussetzungen beim Betreiber
 
 1. SumUp-Händlerkonto.

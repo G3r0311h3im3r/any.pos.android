@@ -40,6 +40,9 @@
   .rows { font-size:clamp(20px,4vw,36px); display:grid; grid-template-columns:auto auto; gap:6px 28px; }
   .rows div:nth-child(even) { text-align:right; font-variant-numeric:tabular-nums; }
   .change { color:#9be7a0; font-weight:700; }
+  .paybtn { display:block; width:100%; max-width:640px; text-align:center; text-decoration:none; border-radius:18px;
+    padding:28px 16px; background:var(--accent); color:#fff; font-size:clamp(28px,6vw,48px); font-weight:700; }
+  .notice { margin:10px 8px 0; padding:10px 14px; border-radius:10px; background:var(--warn); font-size:clamp(17px,3vw,24px); }
   #offline { position:fixed; inset:auto 0 0 0; background:var(--warn); color:#fff; text-align:center; padding:10px;
     font-size:18px; display:none; }
 </style>
@@ -76,7 +79,8 @@
           (l.unit ? '<span class="d">' + esc(l.unit) + (l.discount ? " · Rabatt " + esc(l.discount) : "") + '</span>' : "") +
           '</span><span class="t">' + esc(l.total) + '</span></li>';
       });
-      html += '</ul><div class="sum"><span>Summe</span><span>' + esc(s.total) + '</span></div>';
+      html += '</ul>' + (s.notice ? '<div class="notice">' + esc(s.notice) + '</div>' : "") +
+        '<div class="sum"><span>Summe</span><span>' + esc(s.total) + '</span></div>';
       view.innerHTML = html;
       var hl = view.querySelector("li.hl") || view.querySelector("li:last-child");
       if (hl) hl.scrollIntoView({ block: "nearest" });
@@ -92,6 +96,21 @@
       view.innerHTML = h;
       Array.prototype.forEach.call(view.querySelectorAll(".opts button"), function (b) {
         b.addEventListener("click", function () { choose(s.ask, b.getAttribute("data-id")); });
+      });
+    } else if (s.mode === "card") {
+      // Kartenzahlung über die SumUp-App auf diesem Gerät (Tap to Pay): ein Tipp öffnet die App
+      var c = '<div class="center"><div class="mid">Kartenzahlung</div><div class="big">' + esc(s.total) + '</div>';
+      if (!s.opened) {
+        c += '<a class="paybtn" id="pay" href="' + esc(s.link) + '">Mit Karte zahlen</a>' +
+          '<div class="mid muted">Antippen – danach Karte oder Smartphone an dieses Gerät halten</div>';
+      } else {
+        c += '<div class="mid">Bitte Karte an dieses Gerät halten …</div>' +
+          '<div class="mid muted">Die SumUp-App führt durch die Zahlung.</div>';
+      }
+      view.innerHTML = c + '</div>';
+      var pay = document.getElementById("pay");
+      if (pay) pay.addEventListener("click", function () {
+        try { if (navigator.sendBeacon) navigator.sendBeacon(base + "/sumup-open/" + s.nonce, ""); } catch (e) {}
       });
     } else if (s.mode === "paid") {
       var r = '<div class="center"><div class="big">Vielen Dank!</div><div class="rows">' +

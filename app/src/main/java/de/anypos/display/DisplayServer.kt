@@ -1,6 +1,8 @@
 package de.anypos.display
 
 import de.anypos.domain.CustomerDisplayHub
+import de.anypos.payment.SumUpSwitch
+import de.anypos.payment.SumUpSwitchBridge
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -32,6 +34,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * - `GET  /d/<schlüssel>`         Anzeigeseite ([page])
  * - `GET  /d/<schlüssel>/events`  Server-Sent Events: aktueller Zustand sofort, danach jede Änderung; alle 15 s ein Lebenszeichen
  * - `POST /d/<schlüssel>/tip`     Trinkgeldauswahl `{"ask":"…","option":"…"}` – nur für die gerade offene Frage
+ * - `GET  /d/<schlüssel>/sumup/<einmalcode>?smp-status=…`  Rückruf der SumUp-App (Payment Switch) → [switch]
+ * - `POST /d/<schlüssel>/sumup-open/<einmalcode>`         Kunde hat „Mit Karte zahlen“ angetippt
  *
  * Alles andere und jeder falsche Schlüssel: 404. Die Seite zeigt nur, was der Kunde ohnehin sieht; die TSE ist nicht beteiligt.
  */
@@ -43,6 +47,8 @@ class DisplayServer(
     bindAddress: InetAddress? = null,
     private val heartbeatMs: Long = 15_000,
     private val maxConnections: Int = 32,
+    /** Kartenzahlung über die SumUp-App am Display; null = nicht angeboten. */
+    private val switch: SumUpSwitchBridge? = null,
 ) : Closeable {
     private val server = ServerSocket().apply {
         reuseAddress = true
@@ -96,8 +102,20 @@ class DisplayServer(
         val method = parts[0]
         val path = parts[1].substringBefore('?')
         val segments = path.trim('/').split('/')
-        if (segments.size !in 2..3 || segments[0] != "d" || !sameToken(segments[1])) return respond(out, 404, "text/plain", "Nicht gefunden")
+        if (segments.size !in 2..4 || segments[0] != "d" || !sameToken(segments[1])) return respond(out, 404, "text/plain", "Nicht gefunden")
+        val home = "/d/" + segments[1]
         when {
+            method == "GET" && segments.size == 4 && segments[2] == "sumup" && switch != null -> {
+                // Rückruf der SumUp-App: Ergebnis übernehmen (nur mit passendem Einmal-Code), dann zurück zum Display
+                val accepted = switch.deliver(segments[3], SumUpSwitch.params(parts[1]))
+                respond(out, 200, "text/html; charset=utf-8",
+                    "<!doctype html><meta charset=utf-8><meta name=viewport content=\"width=device-width\">" +
+                        "<p style=\"font:20px sans-serif\">${if (accepted) "Zahlung übermittelt" else "Rückmeldung bereits verarbeitet"} – zurück zum Display …</p>" +
+                        "<script>location.replace(\"$home\")</script>")
+            }
+            method == "POST" && segments.size == 4 && segments[2] == "sumup-open" && switch != null ->
+                if (switch.markOpened(segments[3])) respond(out, 204, null, "") else respond(out, 409, "text/plain", "Keine offene Zahlung")
+            segments.size == 4 -> respond(out, 404, "text/plain", "Nicht gefunden")
             method == "GET" && segments.size == 2 -> respond(out, 200, "text/html; charset=utf-8", page())
             method == "GET" && segments[2] == "events" -> events(socket, out)
             method == "POST" && segments[2] == "tip" -> {

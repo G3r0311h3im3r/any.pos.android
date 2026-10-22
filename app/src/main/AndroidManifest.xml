@@ -7,6 +7,14 @@
     <!-- Nur für optionalen Netzwerkdrucker (Test/Alternative zu USB) -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- SumUp-App für Kartenzahlungen öffnen können (Paketsichtbarkeit) -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="sumupmerchant" />
+        </intent>
+    </queries>
+
     <application
         android:name=".AnyPosApp"
         android:allowBackup="false"
@@ -39,6 +47,13 @@
             <meta-data
                 android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
                 android:resource="@xml/usb_device_filter" />
+            <!-- Rückruf der SumUp-App nach einer Kartenzahlung (Payment Switch) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="anypos" android:host="sumup-callback" />
+            </intent-filter>
         </activity>
 
         <provider

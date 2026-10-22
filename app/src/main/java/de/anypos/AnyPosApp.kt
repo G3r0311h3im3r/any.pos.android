@@ -193,7 +193,7 @@ class AppContainer(context: Context, private val restoredFrom: String? = null) {
                 }
                 if (customerDisplay.state.value is DisplayState.Idle) customerDisplay.publish(DisplayState.Idle(settings[Key.COMPANY_NAME]))
                 displayServer = try {
-                    DisplayServer(customerDisplay, token, settings.int(Key.CUSTOMER_DISPLAY_PORT), { displayPage }).start()
+                    DisplayServer(customerDisplay, token, settings.int(Key.CUSTOMER_DISPLAY_PORT), { displayPage }, switch = sumupSwitch).start()
                 } catch (e: Exception) {
                     displayError = "Kundendisplay konnte nicht starten: ${e.message}"
                     audit.log("System", "KUNDENDISPLAY_FEHLER", e.message.orEmpty())
@@ -203,6 +203,8 @@ class AppContainer(context: Context, private val restoredFrom: String? = null) {
     }
     val closing = ClosingService(db, pos, audit)
     val cards = CardPayments(db, audit, { settings[Key.REGISTER_ID] })
+    /** Laufende Kartenzahlung über die SumUp-App (Payment Switch) und ihr Rückruf. */
+    val sumupSwitch = de.anypos.payment.SumUpSwitchBridge()
     val exports = ExportService(context.applicationContext, db, pos, settings, audit, ::company)
 
     fun company() = Company(

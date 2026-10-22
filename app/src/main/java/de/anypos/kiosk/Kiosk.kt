@@ -32,7 +32,8 @@ object Kiosk {
         val dpm = activity.getSystemService(DevicePolicyManager::class.java)
         if (isDeviceOwner(activity)) {
             val admin = admin(activity)
-            dpm.setLockTaskPackages(admin, arrayOf(activity.packageName))
+            // SumUp-App darf im gesperrten Modus für Kartenzahlungen geöffnet werden (Payment Switch)
+            dpm.setLockTaskPackages(admin, arrayOf(activity.packageName, de.anypos.payment.SumUpSwitch.SUMUP_PACKAGE))
             dpm.setLockTaskFeatures(admin, DevicePolicyManager.LOCK_TASK_FEATURE_NONE)
             dpm.addPersistentPreferredActivity(
                 admin,

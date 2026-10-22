@@ -30,10 +30,22 @@ object CardTerminals {
     const val NONE = "none"
     const val SIMULATED = "simulated"
     const val SUMUP = "sumup"
+    /** SumUp-App (Payment Switch) auf dem Smartphone am Kundendisplay – Tap to Pay. */
+    const val SUMUP_DISPLAY = "sumup_display"
+    /** SumUp-App (Payment Switch) auf diesem Tablet – z. B. mit Solo per Bluetooth. */
+    const val SUMUP_TABLET = "sumup_tablet"
+    val switch = listOf(SUMUP_DISPLAY, SUMUP_TABLET)
+
+    /**
+     * SumUp-App (Payment Switch) ist vorbereitet, aber zurückgestellt (22.10.2026: Test am Kundendisplay – Ablauf
+     * und Rückruf funktionierten, die SumUp-App lehnte die Karten per Tap to Pay jedoch mit „Karte nicht
+     * unterstützt“ ab). Auf true setzen, um die Auswahl wieder anzubieten.
+     */
+    const val SWITCH_ENABLED = false
 
     /** Zahlungsname auf Bon und in der DSFinV-K. */
     fun paymentLabel(terminal: String) = when (terminal) {
-        SUMUP -> "Karte SumUp"
+        SUMUP, SUMUP_DISPLAY, SUMUP_TABLET -> "Karte SumUp"
         SIMULATED -> "Karte (Simulation)"
         else -> "EC-Karte"
     }

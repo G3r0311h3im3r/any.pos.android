@@ -1,5 +1,6 @@
 package de.anypos.ui
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -18,6 +19,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import de.anypos.AnyPosApp
 import de.anypos.domain.Key
 import de.anypos.kiosk.Kiosk
+import de.anypos.payment.SumUpSwitch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -50,6 +52,21 @@ class MainActivity : ComponentActivity() {
         setContent {
             PosTheme { AppRoot(container) }
         }
+        handleSumUpCallback(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleSumUpCallback(intent)
+    }
+
+    /** Rückruf der SumUp-App (Payment Switch): anypos://sumup-callback/<einmalcode>?smp-status=… */
+    private fun handleSumUpCallback(intent: Intent?) {
+        val uri = intent?.data ?: return
+        if (uri.scheme != "anypos" || uri.host != "sumup-callback") return
+        val nonce = uri.pathSegments.firstOrNull() ?: return
+        (application as AnyPosApp).container.sumupSwitch.deliver(nonce, SumUpSwitch.params(uri.toString()))
+        intent.data = null
     }
 }
 
