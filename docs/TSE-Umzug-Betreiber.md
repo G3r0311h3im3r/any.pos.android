@@ -6,8 +6,11 @@ was erledigt ist.
 
 **Das Wichtigste vorab**
 
-- Ihr Epson-Bondrucker bleibt. Im Drucker steckt die **TSE** – das ist der kleine Sicherheits-Chip, der
-  jeden Verkauf fälschungssicher „unterschreibt“. Any.POS nutzt **denselben Chip** weiter.
+- Ihr Epson-Bondrucker bleibt. Im Drucker steckt die **TSE** – das ist der kleine Sicherheits-Chip
+  (meist ein USB-Stick in einer Buchse am Drucker), der jeden Verkauf fälschungssicher „unterschreibt“.
+  Any.POS nutzt **denselben Chip** weiter.
+- **Der Chip bleibt im Drucker stecken.** Stecken Sie ihn nie ans Tablet um – dort funktioniert er nicht.
+  Das Tablet spricht den Chip immer über den Drucker an.
 - Den Chip **niemals zurücksetzen, neu einrichten oder Daten darauf löschen**. Sonst gehen Daten verloren,
   die Sie 10 Jahre aufbewahren müssen.
 - **PINs nie raten.** Nach drei falschen Versuchen sperrt sich der Chip.
@@ -37,9 +40,30 @@ eingestellt?“* Wenn ja, notieren Sie es (8 Zeichen). Wenn nein oder unbekannt,
 ### ☐ 2. Diese Angaben notieren (oder abfotografieren)
 
 - Druckermodell (Typenschild unten am Drucker, z. B. „TM-m30III“)
-- **IP-Adresse des Druckers**: Drucker ausschalten, die Taste **Feed** (Papiervorschub) gedrückt halten
-  und dabei einschalten. Es druckt ein Statuszettel – darauf steht die „IP Address“, z. B. `192.168.1.50`.
 - Seriennummer der TSE und Ablaufdatum des Zertifikats (stehen in JTL-POS in der TSE-Info und auf jedem Bon)
+- **Wie ist der Drucker mit der Kasse verbunden?** Kreuzen Sie an – danach richten sich die Punkte 9 und 10:
+
+| ☐ | Variante | Woran Sie es erkennen |
+|---|---|---|
+| ☐ | **USB** | Ein **USB-Kabel** führt vom Drucker direkt zum Tablet (oder zu einem Adapter am Tablet). |
+| ☐ | **Netzwerk** | Der Drucker hängt mit einem **Netzwerkkabel** am Router oder ist im **WLAN**; zum Tablet führt kein Kabel. |
+
+Nur bei **Netzwerk** zusätzlich die **IP-Adresse des Druckers** notieren: Drucker ausschalten, die Taste
+**Feed** (Papiervorschub) gedrückt halten und dabei einschalten. Es druckt ein Statuszettel – darauf steht
+die „IP Address“, z. B. `192.168.1.50`.
+
+### ☐ 2a. Nur bei USB: Laden des Tablets prüfen
+
+Das Tablet hat meist nur **eine** Buchse. Es muss über dieselbe Verbindung **laden** und **drucken** können.
+
+- **Drucker TM-m30III (oder anderer Drucker mit Ladefunktion):** Ein **USB-C-Kabel** vom Drucker zum Tablet
+  genügt – der Drucker lädt das Tablet dabei mit. **Kein weiterer Adapter nötig.** Lassen Sie die Verkabelung
+  so, wie sie mit JTL-POS funktioniert hat.
+- **Drucker ohne Ladefunktion:** Sie brauchen einen **USB-C-Hub mit Ladeanschluss** (auf der Packung steht
+  „PD“ oder „Power Delivery“): Ladekabel des Tablets → Ladeanschluss des Hubs, USB-Kabel des Druckers → eine
+  USB-Buchse des Hubs, Hub → Buchse des Tablets.
+
+**Prüfen:** Tablet mit dem Drucker verbinden, Drucker einschalten – oben am Tablet muss das Lade-Symbol erscheinen.
 
 ### ☐ 3. Any.POS auf dem Tablet installieren
 
@@ -142,20 +166,38 @@ Steuerberater zustimmt.
 
 ## Teil C – Am Umzugstag: Any.POS mit dem Chip verbinden
 
-Das Tablet muss im **selben Netzwerk (WLAN)** wie der Drucker sein.
+Arbeiten Sie bei den Punkten 9 und 10 nur den Teil Ihrer Variante aus Punkt 2 ab (**USB** *oder*
+**Netzwerk**). Der Chip bleibt dabei im Drucker.
 
 ### ☐ 9. Drucker in Any.POS eintragen
 
-**Einstellungen → Bondrucker & Schublade:** **Netzwerk** wählen, bei *Netzwerkdrucker IP* die IP-Adresse
-vom Statuszettel eintragen → oben **Speichern** → **Testdruck**. Es muss ein Zettel kommen.
+**Variante USB**
+
+1. Drucker einschalten und wie in Punkt 2a mit dem Tablet verbinden.
+2. **Einstellungen → Bondrucker & Schublade:** **USB** wählen → oben **Speichern**.
+3. Android fragt *„Any.POS Zugriff auf … erlauben?“* → Häkchen bei **„Immer für dieses Gerät“** setzen → **OK**.
+   *(Kommt die Frage nicht, Drucker-Kabel einmal ab- und wieder anstecken.)*
+4. **Testdruck**. Es muss ein Zettel kommen.
+
+**Variante Netzwerk**
+
+Das Tablet muss im **selben Netzwerk (WLAN)** wie der Drucker sein.
+
+1. **Einstellungen → Bondrucker & Schublade:** **Netzwerk** wählen, bei *Netzwerkdrucker IP* die IP-Adresse
+   vom Statuszettel eintragen → oben **Speichern**.
+2. **Testdruck**. Es muss ein Zettel kommen.
 
 ### ☐ 10. Chip einrichten
 
 **Einstellungen → TSE:**
 
-1. **Epson** antippen → oben **Speichern**. Das Feld *TSE-Host* leer lassen (dann wird die Drucker-IP genommen).
-2. **Zertifikat des Druckers bestätigen** → es erscheint ein Fenster mit einer langen Zeichenfolge → **Vertrauen**.
-   *(Die Verbindung zum Drucker ist damit verschlüsselt.)*
+1. **Epson** antippen.
+2. Bei *Verbindung* dieselbe Variante wie beim Drucker wählen:
+    - **Variante USB:** **USB (über den Drucker)** → oben **Speichern**. Mehr ist hier nicht einzustellen –
+      kein Host, kein Zertifikat.
+    - **Variante Netzwerk:** **Netzwerk** → oben **Speichern**. Das Feld *TSE-Host* leer lassen (dann wird
+      die Drucker-IP genommen). Dann **Zertifikat des Druckers bestätigen** → es erscheint ein Fenster mit
+      einer langen Zeichenfolge → **Vertrauen**. *(Die Verbindung zum Drucker ist damit verschlüsselt.)*
 3. **TimeAdmin-PIN setzen** → TimeAdmin-PIN eingeben → OK.
 4. Nur falls es ein eigenes Shared Secret gibt (Punkt 1): **Shared Secret setzen** → eingeben → OK.
 5. Den Schalter **Schreibschutz** einschalten, sodass dort **„Schreibzugriff auf die TSE ERLAUBT“** steht,
@@ -221,9 +263,11 @@ Am einfachsten macht das Ihr Steuerberater – geben Sie ihm die Angaben aus Pun
 
 | Was Sie sehen | Was Sie tun |
 |---|---|
-| „TSE nicht erreichbar“ | Ist der Drucker an und im WLAN? Tablet im selben WLAN? Drucker kurz aus- und einschalten. |
-| Beim Zertifikat-Bestätigen erscheint ein Fehler | Drucker-IP prüfen (Punkt 2). Hilft das nicht: Ansprechpartner anrufen – **nicht** selbst die Verschlüsselung ausschalten. |
-| „Druckerzertifikat hat sich geändert“ | Nicht einfach neu bestätigen – Ansprechpartner anrufen. |
+| „TSE nicht erreichbar“ – **USB** | Drucker an? Kabel (und ggf. Hub) fest eingesteckt? Steckt der Chip im Drucker (nicht am Tablet)? Drucker kurz aus- und einschalten; kommt die Android-Frage nach dem USB-Zugriff, **Immer** + **OK**. |
+| „TSE nicht erreichbar“ – **Netzwerk** | Ist der Drucker an und im WLAN? Tablet im selben WLAN? Drucker kurz aus- und einschalten. |
+| Tablet lädt nicht mehr (USB) | Ist der Drucker eingeschaltet? USB-C-Kabel an beiden Enden fest? Bei Hub: Ladekabel muss am **Ladeanschluss des Hubs** stecken (Punkt 2a). |
+| Beim Zertifikat-Bestätigen erscheint ein Fehler (nur Netzwerk) | Drucker-IP prüfen (Punkt 2). Hilft das nicht: Ansprechpartner anrufen – **nicht** selbst die Verschlüsselung ausschalten. |
+| „Druckerzertifikat hat sich geändert“ (nur Netzwerk) | Nicht einfach neu bestätigen – Ansprechpartner anrufen. |
 | Import zeigt Fehler | Zeilennummer und Grund notieren, in JTL korrigieren, neu exportieren, erneut einspielen. |
 | „PIN falsch“ / „PIN gesperrt“ | Nicht weiter probieren. Gesperrte PINs lassen sich nur mit dem PUK entsperren. |
 | „Kasse nicht registriert“ | Punkt 11 wiederholen. |
