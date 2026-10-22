@@ -106,7 +106,7 @@ fun SettingsScreen(container: AppContainer, user: User) {
         HorizontalDivider()
 
         Text("TSE", style = MaterialTheme.typography.titleMedium)
-        choice(Key.TSE_MODE, listOf("none" to "keine TSE", "simulated" to "Simulation (nur Test!)", "epson" to "Epson (im Aufbau)"))
+        choice(Key.TSE_MODE, listOf("none" to "keine TSE", "simulated" to "Simulation (nur Test!)", "epson" to "Epson-TSE"))
         Text("Ohne zertifizierte TSE ist kein steuerlich zulässiger Betrieb möglich. Die Simulation erzeugt ungültige Belege und dient nur Tests/Schulung.",
             style = MaterialTheme.typography.bodySmall)
         if (v(Key.TSE_MODE) == "epson") {

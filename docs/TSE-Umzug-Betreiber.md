@@ -191,7 +191,7 @@ Das Tablet muss im **selben Netzwerk (WLAN)** wie der Drucker sein.
 
 **Einstellungen → TSE:**
 
-1. **Epson** antippen.
+1. **Epson-TSE** antippen.
 2. Bei *Verbindung* dieselbe Variante wie beim Drucker wählen:
     - **Variante USB:** **USB (über den Drucker)** → oben **Speichern**. Mehr ist hier nicht einzustellen –
       kein Host, kein Zertifikat.

@@ -97,7 +97,7 @@ Die USB-Buchse des Tablets ist später vom Drucker belegt, deshalb läuft die Ve
 
 *Einstellungen → TSE:*
 
-1. **Epson** wählen, bei *Verbindung* **USB (über den Drucker)** → oben **Speichern**.
+1. **Epson-TSE** wählen, bei *Verbindung* **USB (über den Drucker)** → oben **Speichern**.
 2. Prüfen, dass unten **„Schreibschutz aktiv: nur lesende TSE-Aufrufe“** steht. **Den Schalter nicht anfassen.**
 3. **Keine** TimeAdmin-PIN und **kein** Shared Secret eingeben.
 

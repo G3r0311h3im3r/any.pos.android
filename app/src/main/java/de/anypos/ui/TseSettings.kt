@@ -222,10 +222,11 @@ fun TseEpsonSection(container: AppContainer, user: User, onMessage: (String) -> 
         title = { Text("Schreibzugriff auf die TSE erlauben?") },
         text = {
             Text(
-                "Danach darf die Kasse schreibende Befehle an die TSE senden (Anmeldung, Zeit setzen, Clients registrieren, " +
-                    "Transaktionen). Nur für die Mock-TSE oder eine Development-TSE verwenden. Für die Produktiv-TSE ist eine " +
-                    "schriftliche Freigabe des Betreibers nötig, und es darf keine Testbuchung auf einer TSE erfolgen, die " +
-                    "parallel produktiv von JTL-POS genutzt wird. Die Änderung wird protokolliert.",
+                "Danach darf die Kasse schreibende Befehle an die TSE senden (Anmeldung, Zeit setzen, Transaktionen; im " +
+                    "Admin-Ablauf auch Kassen registrieren und Exporte). Für den Kassenbetrieb ist das dauerhaft nötig – ohne " +
+                    "Schreibzugriff werden Bons als TSE-Ausfall gedruckt.\n\nAn der Produktiv-TSE nur mit schriftlicher Freigabe " +
+                    "des Betreibers einschalten und nie, solange JTL-POS noch mit derselben TSE kassiert (erst nach dem Umzug, " +
+                    "siehe Umzugsanleitung). Keine Testbuchungen auf der Produktiv-TSE. Die Änderung wird protokolliert.",
             )
         },
         confirmButton = {
