@@ -33,6 +33,7 @@ enum class Key(val default: String) {
     TSE_WRITE_ENABLED("false"),    // Schreibschutz: nur lesende TSE-Aufrufe, solange false
     TSE_TIMEADMIN_PIN(""),         // mit Android-Keystore verschlüsselt, nie protokolliert
     TSE_SHARED_SECRET(""),         // mit Android-Keystore verschlüsselt; leer = EPSONKEY
+    TSE_CLOSE_ORPHANS("true"),     // verwaiste TSE-Transaktionen als Belegabbruch abschließen (mit Steuerberater abstimmen)
 
     DATEV_ADVISOR(""),
     DATEV_CLIENT(""),

@@ -104,25 +104,129 @@ class EpsonTse(
      * Zustand hergestellt und [block] **einmal** wiederholt. Ein Fehlercode heißt: sicher nicht ausgeführt – nach
      * „Ergebnis unbekannt“ wird nie wiederholt. Alle anderen Fehler gehen unverändert durch.
      */
-    suspend fun <T> withRecovery(block: suspend () -> T): T = session.withLock {
-        exclusive {
-            try {
-                block()
-            } catch (e: EpsonException) {
-                if (e.code !in RECOVERABLE) throw e
-                restore(e.code)
-                block()
-            }
-        }
+    suspend fun <T> withRecovery(block: suspend () -> T): T = session.withLock { exclusive { recovering(block) } }
+
+    /** Wie [withRecovery], Aufrufer hält [session]. */
+    private suspend fun <T> recovering(block: suspend () -> T): T = try {
+        block()
+    } catch (e: EpsonException) {
+        if (e.code !in RECOVERABLE) throw e
+        restore(e.code)
+        block()
     }
 
     /** Zeit der TSE nachführen (z. B. regelmäßig im Betrieb); stellt Anmeldung/Self-Test bei Bedarf wieder her. */
     suspend fun syncTime() = withRecovery { updateTime() }
 
-    override suspend fun startTransaction(clientId: String): TseStart = throw TseException(NOT_YET)
+    /** Startzeiten laufender Transaktionen (aus `logTime`), für [TseFinish.startTime]. */
+    private val startTimes = java.util.concurrent.ConcurrentHashMap<Long, Long>()
 
+    override suspend fun startTransaction(clientId: String): TseStart = session.withLock {
+        exclusive {
+            prepare()
+            val out = try {
+                recovering {
+                    call("StartTransaction", mapOf("clientId" to clientId, "processData" to "", "processType" to ProcessData.PROCESS_TYPE, "additionalData" to ""))
+                }
+            } catch (e: EpsonException) {
+                throw when (e.code) {
+                    CLIENT_NOT_REGISTERED -> TseLoginException("Kasse „$clientId“ ist an der TSE nicht registriert – Admin-Ablauf „TSE übernehmen“ nötig", e.code)
+                    MAX_PARALLEL -> TseCapacityException("TSE: zu viele offene Transaktionen (${e.code})")
+                    else -> e
+                }
+            }
+            val number = out.long("transactionNumber") ?: throw TseResultUnknownException("StartTransaction", "StartTransaction ohne transactionNumber")
+            val start = parseLogTime(out.string("logTime"))
+            startTimes[number] = start
+            TseStart(number, start, info?.serialHex.orEmpty())
+        }
+    }
+
+    /**
+     * Abschluss mit processData (Base64 von UTF-8). Bei unbekanntem Ergebnis wird **nicht** blind wiederholt, sondern
+     * der Zustand der TSE geprüft: Ist die Transaktion noch offen, kam der Abschluss nachweislich nicht an und darf
+     * erneut gesendet werden; sonst werden die Signaturdaten aus `GetLastTransactionResponse` übernommen, sofern sie
+     * zu dieser Transaktion gehören.
+     */
     override suspend fun finishTransaction(clientId: String, txNumber: Long, processType: String, processData: String): TseFinish =
-        throw TseException(NOT_YET)
+        session.withLock {
+            exclusive {
+                prepare()
+                val encoded = Base64.getEncoder().encodeToString(processData.toByteArray(Charsets.UTF_8))
+                val finish = suspend {
+                    call("FinishTransaction", mapOf(
+                        "transactionNumber" to txNumber, "clientId" to clientId, "processData" to encoded,
+                        "processType" to processType, "additionalData" to "",
+                    ))
+                }
+                val out = try {
+                    recovering(finish)
+                } catch (e: TseResultUnknownException) {
+                    resolveUnknownFinish(clientId, txNumber, e) ?: recovering(finish)
+                }
+                buildFinish(txNumber, out)
+            }
+        }
+
+    /** @return Signaturdaten, wenn der Abschluss erfolgt ist; null, wenn er nachweislich nicht ankam (erneut senden). */
+    private suspend fun resolveUnknownFinish(clientId: String, txNumber: Long, unknown: TseResultUnknownException): JsonObject? {
+        val open = try { startedList(clientId) } catch (e: TseException) { throw unknown }
+        if (txNumber in open) return null
+        val last = try { call("GetLastTransactionResponse", mapOf("clientId" to clientId)) } catch (e: TseException) { throw unknown }
+        if (last.long("transactionNumber") == txNumber) return last
+        throw unknown
+    }
+
+    override suspend fun reconcile(clientId: String, knownOpen: Set<Long>): List<TseFinish> = session.withLock {
+        exclusive {
+            val orphans = startedList(clientId).filter { it !in knownOpen }
+            if (orphans.isEmpty()) return@exclusive emptyList()
+            prepare()
+            val abort = Base64.getEncoder().encodeToString(ORPHAN_PROCESS_DATA.toByteArray(Charsets.UTF_8))
+            orphans.map { number ->
+                val out = recovering {
+                    call("FinishTransaction", mapOf(
+                        "transactionNumber" to number, "clientId" to clientId, "processData" to abort,
+                        "processType" to ProcessData.PROCESS_TYPE, "additionalData" to "",
+                    ))
+                }
+                startTimes.remove(number)
+                buildFinish(number, out).copy(startTime = 0)
+            }
+        }
+    }
+
+    /** Erst bei Bedarf: Self-Test, Anmeldung, Zeit (danach übernimmt [recovering] Ablauf und Störungen). */
+    private suspend fun prepare() { if (!loggedIn) ensureReadyLocked() }
+
+    private suspend fun startedList(clientId: String): List<Long> =
+        (call("GetStartedTransactionList", mapOf("clientId" to clientId))["startedTransactionNumberList"] as? JsonArray)
+            ?.mapNotNull { (it as? JsonPrimitive)?.longOrNull } ?: emptyList()
+
+    private suspend fun buildFinish(txNumber: Long, out: JsonObject): TseFinish {
+        val i = info ?: readStorageInfo()
+        return TseFinish(
+            txNumber = txNumber,
+            startTime = startTimes.remove(txNumber) ?: 0, // nach Neustart unbekannt → PosService nimmt die gespeicherte
+            endTime = parseLogTime(out.string("logTime")),
+            signatureCounter = out.long("signatureCounter") ?: throw TseResultUnknownException("FinishTransaction", "Antwort ohne signatureCounter"),
+            signature = out.string("signature") ?: throw TseResultUnknownException("FinishTransaction", "Antwort ohne signature"),
+            serial = i.serialHex.orEmpty(),
+            signatureAlgorithm = SIGNATURE_ALGORITHM,
+            timeFormat = TIME_FORMAT,
+            publicKey = i.publicKeyBase64.orEmpty(),
+            certificate = certificate(),
+        )
+    }
+
+    @Volatile private var certificateCache: String? = null
+
+    /** `GetLogMessageCertificate` (lesend), einmal je Sitzung; Base64 der PEM-Kette, wie für die DSFinV-K abgelegt. */
+    private suspend fun certificate(): String = certificateCache ?: try {
+        call("GetLogMessageCertificate").string("logMessageCertificate").orEmpty().also { certificateCache = it }
+    } catch (e: TseException) {
+        "" // nicht kritisch für den Beleg; wird beim nächsten Abschluss erneut versucht
+    }
 
     /** Abmelden (falls angemeldet), Gerät schließen und Sitzung beenden (`<disconnect>`). */
     suspend fun shutdown() {
@@ -254,7 +358,19 @@ class EpsonTse(
         /** Seriennummer der Mock-TSE beginnt mit den Bytes „MOCK“. */
         const val MOCK_SERIAL_PREFIX = "4D4F434B"
         const val MOCK_NOTICE = "MOCK – KEIN GÜLTIGER BELEG"
-        private const val NOT_YET = "Epson-TSE: Transaktionen noch nicht freigeschaltet – Vorgang wird als TSE-Ausfall erfasst"
+        const val SIGNATURE_ALGORITHM = "ecdsa-plain-SHA256"
+        /** Epson liefert logTime als ISO-Zeit; gespeichert wird Unixzeit (wie fiskaltrust für Epson). */
+        const val TIME_FORMAT = "unixTime"
+        private const val MAX_PARALLEL = "TSE1_ERROR_MAX_PARALLEL_TRANSACTIONS"
+
+        /** processData für verwaiste Transaktionen: Belegabbruch ohne Beträge (DSFinV-K Kassenbeleg-V1). */
+        val ORPHAN_PROCESS_DATA = "AVBelegabbruch^0.00_0.00_0.00_0.00_0.00^"
+
+        private fun JsonObject.long(key: String): Long? = (this[key] as? JsonPrimitive)?.longOrNull
+
+        /** `logTime` (ISO, UTC) → ms. */
+        fun parseLogTime(value: String?): Long = value?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
+            ?: throw TseResultUnknownException("logTime", "Antwort ohne gültige logTime")
 
         private val RELOGIN = setOf("OTHER_ERROR_UNAUTHENTICATED_TIME_ADMIN_USER", "TSE1_ERROR_AUTHENTICATION_USER_NOT_LOGGED_IN")
         private val SELF_TEST = setOf("TSE1_ERROR_WRONG_STATE_NEEDS_SELF_TEST", "TSE1_ERROR_WRONG_STATE_NEEDS_SELF_TEST_PASSED")
@@ -315,7 +431,6 @@ data class EpsonStorageInfo(
         add(if (hasValidTime) "Zeit gesetzt" else "Zeit fehlt")
         createdSignatures?.let { add("$it Signaturen") }
         certificateExpiration?.takeIf { it.isNotEmpty() }?.let { add("Zertifikat bis ${it.take(10)}") }
-        add("Transaktionen noch nicht freigeschaltet")
     }.joinToString(" · ")
 
     /** Rohwerte für die Anzeige „Verbindung prüfen“ (Dokumentation Phase 2a). */

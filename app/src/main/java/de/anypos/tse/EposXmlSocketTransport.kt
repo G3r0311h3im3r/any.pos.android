@@ -281,13 +281,22 @@ class EposXmlSocketTransport(
         log("Alte Sitzung beendet: ${code ?: "ohne Code"}")
     }
 
-    private suspend fun openDevice() {
+    /**
+     * Gerät öffnen. Ist die Verbindung inzwischen tot (z. B. App im Hintergrund eingefroren, WLAN kurz weg), wird
+     * genau einmal neu verbunden – gefahrlos, weil noch kein Kommando gesendet wurde.
+     */
+    private suspend fun openDevice(reconnectOnce: Boolean = true) {
         for (attempt in 1..openAttempts) {
             val code = try {
                 send("<open_device><device_id>$DEVICE_ID</device_id><data><type>type_storage</type></data></open_device>")
                 readUntil("open_device", openTimeoutMs).text("code")
             } catch (e: IOException) {
                 abandonSession()
+                if (reconnectOnce) {
+                    log("Verbindung beim Öffnen getrennt – neu verbinden")
+                    establish()
+                    return openDevice(reconnectOnce = false)
+                }
                 throw TseTransportException("Öffnen der TSE fehlgeschlagen: ${e.message}", e)
             }
             if (code == "OK") {

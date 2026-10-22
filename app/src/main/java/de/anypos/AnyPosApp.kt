@@ -30,6 +30,7 @@ import de.anypos.tse.TseLoginException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import javax.net.SocketFactory
@@ -129,7 +130,7 @@ class AppContainer(context: Context, private val restoredFrom: String? = null) {
         return tseInstance
     }
 
-    val pos = PosService(db, ::tse, settings, audit)
+    val pos = PosService(db, ::tse, settings, audit, scope = scope)
     val closing = ClosingService(db, pos, audit)
     val exports = ExportService(context.applicationContext, db, pos, settings, audit, ::company)
 
@@ -155,6 +156,8 @@ class AppContainer(context: Context, private val restoredFrom: String? = null) {
         settings.load() // stellt sicher, dass Einstellungen vor dem ersten Vorgang geladen sind
         restoredFrom?.let { audit.log("System", "WIEDERHERSTELLUNG", "Sicherung übernommen, bisherige Datenbank aufbewahrt als $it") }
         pos.recoverOpenReceipts()
+        // Abgleich mit der TSE im Hintergrund (Netzwerk), damit der Start der App nicht wartet
+        scope.launch { pos.reconcile() }
     }
 
     companion object {

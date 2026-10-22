@@ -73,9 +73,9 @@ class PosFlowTest {
     @Test fun saleIsSignedNumberedAndImmutable() = runBlocking {
         val open = pos.open(user)
         assertEquals(1L, open.number)
-        assertNotNull(open.tseTxNumber)
         val cart = cart()
         val r = pos.complete(open, cart, listOf(PaymentInput(PaymentType.CASH, "Bar", 1990, 2000)))
+        assertNotNull(r.receipt.tseTxNumber) // TSE-Start läuft im Hintergrund, Abschluss wartet darauf
 
         assertEquals(ReceiptState.FINISHED, r.receipt.state)
         assertEquals(1990L, r.receipt.totalCents)

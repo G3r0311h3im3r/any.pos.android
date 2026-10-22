@@ -97,11 +97,14 @@ class EpsonTseReadOnlyTest {
         assertTrue(status.message.contains("nicht initialisiert"))
     }
 
-    @Test fun transactionsStayDisabled() = runBlocking<Unit> {
+    @Test fun transactionsNeedWriteAccess() = runBlocking<Unit> {
         val f = fixture()
-        f.writeEnabled = true
-        try { f.epson().startTransaction("KASSE-01"); fail() } catch (e: TseException) { assertTrue(e.message!!.contains("TSE-Ausfall")) }
-        assertTrue(f.mock.calls.isEmpty())
+        // Schreibschutz aktiv: Anmeldung (vor dem Start) wird abgewiesen, bevor etwas gesendet wird
+        try { f.epson().startTransaction("KASSE-01"); fail() } catch (e: TseException) {
+            assertTrue(e.message!!, e is TseWriteBlockedException)
+        }
+        assertTrue(f.mock.writeCalls.isEmpty())
+        assertEquals(0, f.count("StartTransaction"))
     }
 
     @Test fun unreachableHostIsUnavailable() = runBlocking<Unit> {

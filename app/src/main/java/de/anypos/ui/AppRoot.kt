@@ -44,6 +44,7 @@ import de.anypos.data.Role
 import de.anypos.data.User
 import de.anypos.domain.Key
 import de.anypos.tse.TseStatus
+import kotlinx.coroutines.delay
 
 enum class Screen(val title: String, val icon: ImageVector, val minRole: Role) {
     POS("Kasse", Icons.Filled.PointOfSale, Role.CASHIER),
@@ -121,7 +122,13 @@ fun TseBanner(container: AppContainer) {
     val values by container.settings.values.collectAsState()
     val mode = values[Key.TSE_MODE.name] ?: Key.TSE_MODE.default
     val tseHost = listOf(Key.TSE_HOST, Key.TSE_PORT, Key.TSE_TLS, Key.TSE_TLS_FINGERPRINT).map { values[it.name] }
-    val status by produceState<TseStatus?>(null, mode, tseHost, values[Key.PRINTER_HOST.name]) { value = container.tse().status() }
+    val status by produceState<TseStatus?>(null, mode, tseHost, values[Key.PRINTER_HOST.name]) {
+        // regelmäßig aktualisieren, sonst bleibt ein alter Fehler stehen
+        while (true) {
+            value = container.tse().status()
+            delay(60_000)
+        }
+    }
     val tse = container.tse()
     if (tse.certified && status?.available == true) return
     Surface(color = Color(0xFFB71C1C), modifier = Modifier.fillMaxWidth()) {

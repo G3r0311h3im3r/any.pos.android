@@ -17,7 +17,19 @@ import de.anypos.data.Voucher
 import de.anypos.data.VoucherType
 import de.anypos.tse.ProcessData
 import de.anypos.tse.Tse
+import de.anypos.tse.TseCapacityException
+import de.anypos.tse.TseFinish
+import de.anypos.tse.TseResultUnknownException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.math.BigDecimal
+import java.util.concurrent.ConcurrentHashMap
 import java.math.RoundingMode
 
 data class PaymentInput(val type: String, val label: String, val amountCents: Long, val givenCents: Long? = null)
@@ -44,11 +56,26 @@ class PosService(
     private val settings: SettingsRepository,
     private val audit: AuditLog,
     private val clock: () -> Long = System::currentTimeMillis,
+    /** Für den TSE-Start im Hintergrund. */
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) {
     private val receipts = db.receipts()
     private val vouchers = db.vouchers()
     private val clientId get() = settings[Key.REGISTER_ID]
 
+    /** Ergebnis eines TSE-Starts; wird in [finish] übernommen. */
+    private data class StartResult(val serial: String?, val txNumber: Long?, val start: Long?, val error: String?)
+
+    /** Laufende TSE-Starts je Beleg-ID. */
+    private val starts = ConcurrentHashMap<Long, Deferred<StartResult>>()
+
+    /** Start/Speichern der Transaktionsnummer und Abgleich dürfen sich nicht überschneiden (sonst „verwaist“). */
+    private val tseLock = Mutex()
+
+    /**
+     * Neuer Vorgang: Belegnummer sofort, TSE-Start im Hintergrund (Netzwerk ca. 0,3–1 s), damit der erste Artikel
+     * nicht wartet. Der Start erfolgt trotzdem zu Beginn des Vorgangs; [finish] wartet auf ihn.
+     */
     suspend fun open(user: User, type: String = ReceiptType.SALE): Receipt {
         val now = clock()
         val receipt = db.withTransaction {
@@ -56,15 +83,73 @@ class PosService(
             val r = Receipt(number = number, type = type, createdAt = now, userId = user.id, userName = user.name)
             r.copy(id = receipts.insertReceipt(r))
         }
-        val started = try {
-            val s = tse().startTransaction(clientId)
-            receipt.copy(tseSerial = s.serial, tseTxNumber = s.txNumber, tseStart = s.startTime)
+        starts[receipt.id] = scope.async { startTse(receipt, user) }
+        return receipt
+    }
+
+    private suspend fun startTse(receipt: Receipt, user: User): StartResult = tseLock.withLock {
+        val result = try {
+            startOnce()
+        } catch (e: TseCapacityException) {
+            // z. B. 512 offene Transaktionen: verwaiste abschließen, dann einmal erneut
+            reconcileLocked()
+            try { startOnce() } catch (e2: Exception) { failed(e2) }
         } catch (e: Exception) {
-            audit.log(user.name, "TSE_START_FEHLER", "Beleg ${receipt.number}: ${e.message}")
-            receipt.copy(tseError = "TSE-Start fehlgeschlagen: ${e.message}")
+            failed(e)
         }
-        receipts.updateReceipt(started)
-        return started
+        receipts.updateTseStart(receipt.id, result.serial, result.txNumber, result.start, result.error)
+        result.error?.let { audit.log(user.name, "TSE_START_FEHLER", "Beleg ${receipt.number}: $it") }
+        // Unbekanntes Ergebnis: Die TSE hat womöglich eine Transaktion begonnen, die die Kasse nicht kennt
+        if (result.error != null && result.unknown) scope.launch { reconcile() }
+        result
+    }
+
+    private val StartResult.unknown get() = error?.contains(UNKNOWN_MARK) == true
+
+    private suspend fun startOnce(): StartResult {
+        val s = tse().startTransaction(clientId)
+        return StartResult(s.serial, s.txNumber, s.startTime, null)
+    }
+
+    private fun failed(e: Exception) = StartResult(null, null, null,
+        "TSE-Start fehlgeschlagen: ${e.message}" + if (e is TseResultUnknownException) " $UNKNOWN_MARK" else "")
+
+    /**
+     * Abgleich mit der TSE (beim Start der App, nach unbekanntem Ergebnis, bei voller TSE, vor dem Kassenabschluss):
+     * offene TSE-Transaktionen dieser Kasse ohne offenen Beleg werden – sofern eingestellt – als Belegabbruch
+     * abgeschlossen. Für jede entsteht ein eigener Vorgang „AVBelegabbruch“ (ohne Positionen und Zahlung), denn jeder
+     * abgesicherte Vorgang muss in der DSFinV-K als Vorgang erkennbar sein (DSFinV-K 2.4 Kap. 2.1, Anhang B).
+     * @return die angelegten Abbruch-Vorgänge
+     */
+    suspend fun reconcile(): List<Receipt> = tseLock.withLock { reconcileLocked() }
+
+    private suspend fun reconcileLocked(): List<Receipt> {
+        if (settings[Key.TSE_CLOSE_ORPHANS] == "false") return emptyList()
+        val known = receipts.openReceipts().mapNotNull { it.tseTxNumber }.toSet()
+        val closed = try { tse().reconcile(clientId, known) } catch (e: Exception) {
+            audit.log("System", "TSE_ABGLEICH_FEHLER", e.message.orEmpty())
+            return emptyList()
+        }
+        return closed.map { f -> recordOrphan(f) }
+    }
+
+    /** Vorgang „AVBelegabbruch“ für eine verwaiste, auf der TSE abgeschlossene Transaktion. */
+    private suspend fun recordOrphan(f: TseFinish): Receipt {
+        val receipt = db.withTransaction {
+            val r = Receipt(
+                number = receipts.maxNumber() + 1, type = ReceiptType.ABORT, state = ReceiptState.ABORTED,
+                createdAt = f.endTime, finishedAt = f.endTime, userId = 0, userName = "System", totalCents = 0,
+                tseSerial = f.serial, tseTxNumber = f.txNumber, tseStart = null, tseEnd = f.endTime,
+                tseSigCounter = f.signatureCounter, tseSignature = f.signature, tseSigAlgorithm = f.signatureAlgorithm,
+                tseTimeFormat = f.timeFormat, tsePublicKey = f.publicKey,
+                tseProcessType = ProcessData.PROCESS_TYPE, tseProcessData = ProcessData.build(ReceiptType.ABORT, emptyList(), emptyList()),
+                tseError = ORPHAN_NOTE,
+            )
+            r.copy(id = receipts.insertReceipt(r))
+        }
+        db.tseInfo().insertIfAbsent(TseInfo(f.serial, f.signatureAlgorithm, f.timeFormat, f.publicKey, f.certificate, firstUsedAt = f.endTime))
+        audit.log("System", "TSE_ABGLEICH", "Verwaiste TSE-Transaktion ${f.txNumber} als Belegabbruch abgeschlossen (Vorgang ${receipt.number})")
+        return receipt
     }
 
     /** Schließt einen Verkauf mit einer oder mehreren Zahlungen (Splitzahlung) ab. */
@@ -108,7 +193,7 @@ class PosService(
         }
 
         val open = open(user).copy(referencesReceiptId = o.id, referencesReceiptNumber = o.number, referenceType = ReferenceType.CANCEL)
-        receipts.updateReceipt(open)
+        receipts.updateReference(open.id, o.id, o.number, ReferenceType.CANCEL)
         val lines = original.lines.map {
             it.copy(id = 0, receiptId = open.id, quantityMilli = -it.quantityMilli, discountCents = -it.discountCents, totalCents = -it.totalCents)
         }
@@ -137,7 +222,7 @@ class PosService(
         val already = returnedQuantities(original)
 
         val open = open(user).copy(referencesReceiptId = o.id, referencesReceiptNumber = o.number, referenceType = ReferenceType.RETURN)
-        receipts.updateReceipt(open)
+        receipts.updateReference(open.id, o.id, o.number, ReferenceType.RETURN)
         val lines = wanted.mapIndexed { i, item ->
             val l = original.lines.firstOrNull { it.id == item.lineId } ?: throw PosException("Position nicht gefunden")
             if (l.businessCase != BusinessCase.SALE || l.quantityMilli <= 0) throw PosException("${l.name} kann nicht zurückgegeben werden")
@@ -210,9 +295,13 @@ class PosService(
     }
 
     private suspend fun finish(
-        open: Receipt, type: String, state: String, lines: List<ReceiptLine>, payments: List<Payment>,
+        receipt: Receipt, type: String, state: String, lines: List<ReceiptLine>, payments: List<Payment>,
         inTransaction: suspend () -> Unit = {},
     ): ReceiptWithDetails {
+        // Auf den TSE-Start im Hintergrund warten und sein Ergebnis übernehmen
+        val open = starts.remove(receipt.id)?.await()?.let {
+            receipt.copy(tseSerial = it.serial, tseTxNumber = it.txNumber, tseStart = it.start, tseError = it.error)
+        } ?: receipt
         val processData = ProcessData.build(type, lines, payments)
         var result = open.copy(
             type = type, state = state, finishedAt = clock(), totalCents = lines.sumOf { it.totalCents },
@@ -223,7 +312,9 @@ class PosService(
             try {
                 val f = tse().finishTransaction(clientId, tx, ProcessData.PROCESS_TYPE, processData)
                 result = result.copy(
-                    tseSerial = f.serial, tseStart = f.startTime, tseEnd = f.endTime, tseSigCounter = f.signatureCounter,
+                    // Startzeit kennt die TSE-Anbindung nach einem Neustart nicht mehr: dann die gespeicherte nehmen
+                    tseSerial = f.serial, tseStart = f.startTime.takeIf { it > 0 } ?: open.tseStart, tseEnd = f.endTime,
+                    tseSigCounter = f.signatureCounter,
                     tseSignature = f.signature, tseSigAlgorithm = f.signatureAlgorithm, tseTimeFormat = f.timeFormat,
                     tsePublicKey = f.publicKey, tseError = null,
                 )
@@ -258,6 +349,11 @@ class PosService(
         Payment(receiptId = receiptId, type = type, label = label, amountCents = amountCents, givenCents = givenCents)
 
     companion object {
+        private const val UNKNOWN_MARK = "(Ergebnis unbekannt)"
+
+        /** Hinweis für TSE_TA_FEHLER: Vorgang entstand beim Wiederanlauf, die Startzeit der Transaktion ist unbekannt. */
+        const val ORPHAN_NOTE = "Wiederanlauf: verwaiste TSE-Transaktion als Belegabbruch abgeschlossen, Startzeit unbekannt"
+
         /** Anteiliger Positionsrabatt für eine Teilmenge. */
         fun proportionalDiscount(line: ReceiptLine, quantityMilli: Long): Long =
             BigDecimal.valueOf(line.discountCents).multiply(BigDecimal.valueOf(quantityMilli))

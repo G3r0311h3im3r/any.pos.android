@@ -43,15 +43,11 @@ class EpsonTseRobustnessTest {
         f.server.dropAllConnections() // z. B. App im Hintergrund eingefroren, WLAN weg
         Thread.sleep(100)
 
-        // Abbruch fällt beim Öffnen des Geräts auf – vor dem Senden, also nicht „unbekannt“
-        val lost = epson.status()
-        assertFalse(lost.available)
-        assertFalse(lost.message, lost.message.contains("unbekannt"))
-        assertEquals(1, storageInfoCalls(f))
-
-        // Danach neue Sitzung; die alte wird per <disconnect> beendet
+        // Abbruch fällt beim Öffnen des Geräts auf – vor dem Senden. Der Transport verbindet einmal neu
+        // (alte Sitzung per <disconnect> beendet), und die Aktion gelingt direkt.
         assertTrue(epson.status().available)
         assertEquals(2, storageInfoCalls(f))
+        assertTrue(f.log.toString(), f.log.any { it.contains("neu verbinden") })
         assertTrue(f.log.toString(), f.log.any { it.contains("Alte Sitzung beendet") })
     }
 

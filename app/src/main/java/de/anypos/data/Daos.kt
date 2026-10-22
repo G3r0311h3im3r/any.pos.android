@@ -67,6 +67,14 @@ interface ReceiptDao {
     @Update
     suspend fun updateReceipt(receipt: Receipt)
 
+    /** Nur die TSE-Startdaten setzen (läuft im Hintergrund, darf andere Felder nicht überschreiben). */
+    @Query("UPDATE receipt SET tseSerial = :serial, tseTxNumber = :txNumber, tseStart = :start, tseError = :error WHERE id = :id")
+    suspend fun updateTseStart(id: Long, serial: String?, txNumber: Long?, start: Long?, error: String?)
+
+    /** Nur den Verweis (Storno/Retoure) setzen. */
+    @Query("UPDATE receipt SET referencesReceiptId = :refId, referencesReceiptNumber = :refNumber, referenceType = :refType WHERE id = :id")
+    suspend fun updateReference(id: Long, refId: Long, refNumber: Long, refType: String)
+
     @Insert
     suspend fun insertLines(lines: List<ReceiptLine>)
 

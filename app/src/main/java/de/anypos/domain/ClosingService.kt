@@ -32,6 +32,8 @@ class ClosingService(
      */
     suspend fun close(user: User, countedCashCents: Long): ClosingReport {
         if (db.receipts().openReceipts().isNotEmpty()) throw PosException("Es gibt noch einen offenen Vorgang")
+        // Keine offene TSE-Transaktion über den Abschluss hinweg: verwaiste vorher als Belegabbruch abschließen
+        pos.reconcile()
         val before = preview(user, countedCashCents)
         val diff = before.closing.differenceCents
         if (diff != 0L) {

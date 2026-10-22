@@ -28,8 +28,10 @@ JTL-POS zeigt sie unter Umständen in der TSE-Konfiguration an. **Nicht raten un
 nach mehreren Fehlversuchen sperrt sich die TSE.
 
 Außerdem wissen wir noch nicht, ob JTL-POS am Drucker einen eigenen „Shared Secret“ (Geräteschlüssel)
-hinterlegt hat. Das klären wir in einem ersten, rein lesenden Test am Drucker; dafür muss nichts
-vorbereitet werden.
+hinterlegt hat. Das lässt sich nicht rein lesend prüfen, sondern nur mit einem Anmeldeversuch an der TSE.
+Diesen Versuch machen wir erst nach Ihrer schriftlichen Freigabe, mit Ihrer TimeAdmin-PIN und nur einmal,
+damit die PIN nicht gesperrt wird. Einfacher ist es, wenn Sie den Wert bei JTL bzw. beim Einrichter
+erfragen können.
 
 ## 2. Angaben zur Hardware und zur TSE
 

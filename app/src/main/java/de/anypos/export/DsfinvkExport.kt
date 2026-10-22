@@ -235,6 +235,7 @@ object DsfinvkExport {
                         "TSE_TA_START" to x.tseStart?.let { tseStamp(it) }, "TSE_TA_ENDE" to x.tseEnd?.let { tseStamp(it) },
                         "TSE_TA_VORGANGSART" to x.tseProcessType, "TSE_TA_SIGZ" to x.tseSigCounter, "TSE_TA_SIG" to x.tseSignature,
                         "TSE_VORGANGSDATEN" to x.tseProcessData,
+                        "TSE_TA_FEHLER" to x.tseError,
                     ))
                 }
                 for (l in r.lines) line(w, bon, l)
