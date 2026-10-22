@@ -56,15 +56,32 @@ object DatevExport {
         val text: String,
     )
 
+    /**
+     * Fehlende Angaben, ohne die keine Buchungen entstehen können (Konten). Berater- und Mandantennummer gehören
+     * nicht dazu: Sie sind weder steuerrechtlich vorgeschrieben noch für den Inhalt nötig, sondern ordnen den Stapel
+     * nur beim Import in DATEV zu – dort bzw. in Zeile 1 der Datei können sie ergänzt werden ([warnings]).
+     * Konten für Kassendifferenz und Mehrzweckgutscheine werden erst verlangt, wenn sie gebucht werden ([bookings]).
+     */
     fun validate(config: DatevConfig): List<String> = buildList {
-        if (config.advisorNumber.isBlank()) add("DATEV-Beraternummer fehlt")
-        if (config.clientNumber.isBlank()) add("DATEV-Mandantennummer fehlt")
         val a = config.accounts
         listOf("Kasse" to a.cash, "Erlöse 19 %" to a.revenue19, "Erlöse 7 %" to a.revenue7, "Erlöse 0 %" to a.revenue0,
             "Geldtransit" to a.transit, "Privatentnahme" to a.privateOut, "Privateinlage" to a.privateIn,
-            "Einzahlung" to a.deposit, "Auszahlung" to a.payout, "Kassendifferenz" to a.difference,
+            "Einzahlung" to a.deposit, "Auszahlung" to a.payout,
         ).filter { it.second.isBlank() }.forEach { add("Konto für ${it.first} fehlt") }
         if (config.includeCardSales && a.card.isBlank()) add("Konto für Kartenzahlungen fehlt")
+    }
+
+    /** Hinweise, die den Export nicht verhindern. */
+    fun warnings(config: DatevConfig): List<String> = buildList {
+        val missing = listOfNotNull(
+            "Beraternummer".takeIf { config.advisorNumber.isBlank() },
+            "Mandantennummer".takeIf { config.clientNumber.isBlank() },
+        )
+        if (missing.isNotEmpty()) {
+            add("DATEV: ${missing.joinToString(" und ")} nicht eingetragen – der Steuerberater ergänzt sie beim Import " +
+                "(bzw. in Zeile 1 der Datei). Die Buchungen selbst sind vollständig.")
+        }
+        add("DATEV-Konten sind SKR03-Vorschläge und mit dem Steuerberater abzustimmen.")
     }
 
     fun bookings(receipts: List<ReceiptWithDetails>, config: DatevConfig): List<Booking> {
@@ -85,6 +102,7 @@ object DatevExport {
                     BusinessCase.TRANSIT -> a.transit
                     else -> a.difference
                 }
+                if (contra.isBlank()) throw IllegalStateException("Konto für Kassendifferenz fehlt (Einstellungen → DATEV), es gibt eine Kassendifferenz im Zeitraum")
                 out += Booking(kotlin.math.abs(l.totalCents), l.totalCents > 0, a.cash, contra, date, r.receipt.number.toString(), "${l.businessCase} ${l.name}".take(60))
             }
         }

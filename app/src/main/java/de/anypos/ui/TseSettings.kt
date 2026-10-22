@@ -32,7 +32,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import java.security.cert.X509Certificate
 
-private val Danger = Color(0xFFB71C1C)
+internal val Danger = Color(0xFFB71C1C)
 
 /** Epson-TSE: Verbindung, TLS, Zugangsdaten, Schreibschutz (nur Admin, Einstellungen sind Admin-Bereich). */
 @Composable
@@ -53,6 +53,7 @@ fun TseEpsonSection(container: AppContainer, user: User, onMessage: (String) -> 
     var offeredCert by remember { mutableStateOf<X509Certificate?>(null) }
     var askPin by remember { mutableStateOf(false) }
     var askSecret by remember { mutableStateOf(false) }
+    var takeover by remember { mutableStateOf(false) }
 
     /** Läuft im Hintergrund; Fehler landen als Meldung, nie als Absturz. */
     fun run(block: suspend () -> Unit) = scope.launch {
@@ -123,6 +124,7 @@ fun TseEpsonSection(container: AppContainer, user: User, onMessage: (String) -> 
                     }
                 }
             }) { Text("Anmeldung testen") }
+            OutlinedButton(enabled = epson && !busy, onClick = { takeover = true }) { Text("TSE übernehmen …") }
         }
         Text(
             (if (!writeOn) "„Anmeldung testen“ braucht Schreibzugriff (Anmelden und Zeit setzen sind schreibende TSE-Befehle). " else "") +
@@ -154,6 +156,8 @@ fun TseEpsonSection(container: AppContainer, user: User, onMessage: (String) -> 
             else Text("Schreibschutz aktiv: nur lesende TSE-Aufrufe")
         }
     }
+
+    if (takeover) TseTakeoverDialog(container, user) { takeover = false }
 
     if (askPin) TextInputDialog("TimeAdmin-PIN der TSE", label = "PIN", numeric = true, password = true, onDismiss = { askPin = false }) { pin ->
         askPin = false

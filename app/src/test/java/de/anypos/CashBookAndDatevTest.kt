@@ -77,7 +77,14 @@ class CashBookAndDatevTest {
         assertTrue(lines[1].startsWith("Umsatz (ohne Soll/Haben-Kz);Soll/Haben-Kennzeichen"))
         assertTrue(lines.any { it.startsWith("50,00;\"S\";\"EUR\";;;\"\";1000;1360;\"\";2110;") })
         assertTrue(DatevExport.validate(config).isEmpty())
-        assertTrue(DatevExport.validate(config.copy(accounts = config.accounts.copy(difference = ""))).isNotEmpty())
+        // Pflicht sind nur Konten; Kassendifferenz erst, wenn gebucht. Berater-/Mandantennummer sind nur Hinweise.
+        assertTrue(DatevExport.validate(config.copy(accounts = config.accounts.copy(cash = ""))).isNotEmpty())
+        assertTrue(DatevExport.validate(config.copy(accounts = config.accounts.copy(difference = ""))).isEmpty())
+        val noNumbers = config.copy(advisorNumber = "", clientNumber = "")
+        assertTrue(DatevExport.validate(noNumbers).isEmpty())
+        assertTrue(DatevExport.warnings(noNumbers).any { it.contains("Beraternummer und Mandantennummer") })
+        assertTrue(DatevExport.render(DatevExport.bookings(listOf(), noNumbers), noNumbers, java.time.LocalDate.of(2026, 10, 21),
+            java.time.LocalDate.of(2026, 10, 21)).lines()[0].contains(";\"\";;;20260101;4;"))
     }
 
     @Test fun escPosEncodesGermanCharactersInPc858() {

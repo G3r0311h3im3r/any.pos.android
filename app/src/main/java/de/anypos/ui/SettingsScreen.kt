@@ -118,9 +118,12 @@ fun SettingsScreen(container: AppContainer, user: User) {
         HorizontalDivider()
 
         Text("DATEV / Steuerberater (Konten mit Steuerberater abstimmen; Vorschlag SKR03)", style = MaterialTheme.typography.titleMedium)
+        Text("Alle Exporte funktionieren auch ohne E-Mail, Berater- und Mandantennummer. Fehlen die Nummern, ergänzt sie " +
+            "der Steuerberater beim DATEV-Import. Das Konto für Kassendifferenzen wird erst gebraucht, wenn eine Differenz gebucht wurde.",
+            style = MaterialTheme.typography.bodySmall)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            field(Key.ADVISOR_EMAIL, "E-Mail Steuerberater", 300)
-            field(Key.DATEV_ADVISOR, "Beraternummer", 180); field(Key.DATEV_CLIENT, "Mandantennummer", 180)
+            field(Key.ADVISOR_EMAIL, "E-Mail Steuerberater (optional)", 300)
+            field(Key.DATEV_ADVISOR, "Beraternummer (optional)", 220); field(Key.DATEV_CLIENT, "Mandantennummer (optional)", 220)
             field(Key.DATEV_FY_START, "WJ-Beginn (MMTT)", 160); field(Key.DATEV_ACCOUNT_LENGTH, "Sachkontenlänge", 160)
             field(Key.ACC_CASH, "Kasse", 140); field(Key.ACC_REV_19, "Erlöse 19 %", 140); field(Key.ACC_REV_7, "Erlöse 7 %", 140)
             field(Key.ACC_REV_0, "Erlöse 0 %", 140); field(Key.ACC_CARD, "Kartenzahlung", 140); field(Key.ACC_TRANSIT, "Geldtransit", 140)

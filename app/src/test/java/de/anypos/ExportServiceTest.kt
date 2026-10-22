@@ -91,14 +91,17 @@ class ExportServiceTest {
         assertTrue(csv.contains("Barumsatz 7 %"))
     }
 
-    @Test fun datevRequiresCompleteSettings() = runBlocking {
-        try { exports.datev(YearMonth.of(2026, 8), true); fail() } catch (e: ExportException) {
-            assertTrue(e.problems.any { it.contains("Beraternummer") })
-        }
-        settings.put(Key.DATEV_ADVISOR, "12345"); settings.put(Key.DATEV_CLIENT, "678"); settings.put(Key.ACC_DIFFERENCE, "2309")
+    @Test fun datevWorksWithoutAdvisorData() = runBlocking {
+        // Ohne E-Mail, Berater- und Mandantennummer: Export entsteht, mit Hinweis
         val f = exports.datev(YearMonth.of(2026, 8), true)
         assertEquals("EXTF_Buchungsstapel_KASSE-01_2026-08.csv", f.name)
         assertTrue(String(f.bytes, charset("windows-1252")).startsWith("\"EXTF\";700"))
+        assertTrue(f.warnings.any { it.contains("Beraternummer und Mandantennummer") })
+
+        settings.put(Key.DATEV_ADVISOR, "12345"); settings.put(Key.DATEV_CLIENT, "678")
+        val g = exports.datev(YearMonth.of(2026, 8), true)
+        assertTrue(String(g.bytes, charset("windows-1252")).lines()[0].contains(";12345;678;"))
+        assertTrue(g.warnings.none { it.contains("Beraternummer") })
     }
 
     @Test fun dsfinvkZipFromAssetsContainsAllTables() = runBlocking {

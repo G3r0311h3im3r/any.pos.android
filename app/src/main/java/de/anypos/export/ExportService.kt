@@ -77,7 +77,7 @@ class ExportService(
         val receipts = db.receipts().finishedBetween(from, to).map { pos.load(it.id) }
         val bookings = try { DatevExport.bookings(receipts, config) } catch (e: IllegalStateException) { throw ExportException(listOf(e.message ?: "DATEV-Fehler")) }
         val text = DatevExport.render(bookings, config, month.atDay(1), month.atEndOfMonth())
-        return ExportFile("EXTF_Buchungsstapel_${safe(registerId)}_$month.csv", "text/csv", DatevExport.encode(text))
+        return ExportFile("EXTF_Buchungsstapel_${safe(registerId)}_$month.csv", "text/csv", DatevExport.encode(text), DatevExport.warnings(config))
     }
 
     /** DSFinV-K-Export aller Tagesabschlüsse, die im Zeitraum [from, to) erstellt wurden. */

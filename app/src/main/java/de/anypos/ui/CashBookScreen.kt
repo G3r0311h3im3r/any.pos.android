@@ -72,7 +72,7 @@ fun CashBookScreen(container: AppContainer, user: User) {
         if (uri != null && file != null) scope.launch {
             context.writeUri(uri, file.bytes)
             container.audit.log(user.name, "EXPORT", file.name)
-            message = "${file.name} gespeichert"
+            message = "${file.name} gespeichert" + file.warnings.joinToString("") { "\n• $it" }
         }
     }
 
@@ -88,6 +88,9 @@ fun CashBookScreen(container: AppContainer, user: User) {
             }
         }
         if (problems.isNotEmpty()) { message = problems.joinToString("\n"); return@launch }
+        // Hinweise verhindern den Export nicht (z. B. fehlende DATEV-Berater-/Mandantennummer)
+        val hints = files.flatMap { it.warnings }.distinct()
+        if (hints.isNotEmpty()) message = "Hinweise zum Export:\n" + hints.joinToString("\n") { "• $it" }
         if (share) {
             container.audit.log(user.name, "EXPORT_GETEILT", files.joinToString { it.name })
             context.shareFiles(

@@ -90,10 +90,85 @@ class EpsonTse(
             ?.mapNotNull { (it as? JsonPrimitive)?.longOrNull } ?: emptyList()
     }
 
-    /** Registrierte Clients. Verlangt eine Admin-Anmeldung (Spez. S. 18) – nur im Admin-Ablauf (Schritt 7). */
-    suspend fun registeredClients(): List<String> = exclusive {
+    /** Registrierte Clients. Verlangt eine Admin-Anmeldung (Spez. S. 18) – im Admin-Ablauf über [asAdmin]. */
+    suspend fun registeredClients(): List<String> = exclusive { readClients() }
+
+    private suspend fun readClients(): List<String> =
         (call("GetRegisteredClientList")["registeredClientIdList"] as? JsonArray)
             ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull } ?: emptyList()
+
+    /** Aktionen, die eine Admin-Anmeldung voraussetzen (Admin-Ablauf „TSE übernehmen“). */
+    interface AdminSession {
+        suspend fun registeredClients(): List<String>
+
+        /** Registriert [clientId], falls noch nicht vorhanden. @return true, wenn tatsächlich registriert wurde. */
+        suspend fun registerClient(clientId: String): Boolean
+
+        /** Self-Test; false = TSE war zuletzt an einem anderen Drucker/Host (dann [setUpForPrinter] nötig). */
+        suspend fun selfTestOnThisHost(): Boolean
+
+        /** Bindet die TSE an diesen Drucker (Guide S. 30) – nur nach Umzug der TSE aus einem anderen Drucker. */
+        suspend fun setUpForPrinter()
+    }
+
+    @Volatile private var adminRejected: String? = null
+
+    /**
+     * Admin-Sitzung: anmelden (Challenge-Hash), [block] ausführen, **immer** abmelden. Die Admin-PIN wird nur hier
+     * verwendet, nie gespeichert und nie protokolliert. Eine abgelehnte PIN wird kein zweites Mal gesendet
+     * (die TSE sperrt sie nach drei Fehlversuchen).
+     */
+    suspend fun <T> asAdmin(adminPin: String, block: suspend AdminSession.() -> T): T = session.withLock {
+        exclusive {
+            val secret = credentials()?.sharedSecret ?: TseCredentials.DEFAULT_SECRET
+            val attempt = TseCredentials(adminPin, secret).id
+            if (attempt == adminRejected) throw TseLoginException("Diese Admin-PIN wurde bereits abgelehnt – keine weiteren Versuche")
+            val challenge = call("GetChallenge", mapOf("userId" to ADMIN_USER)).string("challenge")
+                ?: throw TseResultUnknownException("GetChallenge", "GetChallenge ohne challenge")
+            try {
+                call("AuthenticateUserForAdmin", mapOf("userId" to ADMIN_USER, "pin" to adminPin, "hash" to hash(challenge, secret)))
+            } catch (e: EpsonException) {
+                val left = e.output?.get("remainingRetries")?.let { (it as? JsonPrimitive)?.longOrNull }
+                throw when (e.code) {
+                    AUTH_FAILED -> {
+                        adminRejected = attempt
+                        TseLoginException("Admin-PIN falsch${left?.let { " (noch $it Versuche)" } ?: ""} – bitte prüfen, nicht raten", e.code)
+                    }
+                    PIN_BLOCKED -> { adminRejected = attempt; TseLoginException("Admin-PIN ist gesperrt – Entsperren mit PUK nötig", e.code) }
+                    HOST_AUTH_FAILED -> TseLoginException("Shared Secret passt nicht – unter „Shared Secret setzen“ korrigieren", e.code)
+                    else -> e
+                }
+            }
+            try {
+                adminActions.block()
+            } finally {
+                runCatching { call("LogOutForAdmin") }
+            }
+        }
+    }
+
+    private val adminActions = object : AdminSession {
+        override suspend fun registeredClients() = readClients()
+
+        override suspend fun registerClient(clientId: String): Boolean {
+            validateClientId(clientId)
+            if (clientId in readClients()) return false
+            call("RegisterClient", mapOf("clientId" to clientId))
+            return true
+        }
+
+        override suspend fun selfTestOnThisHost(): Boolean = try {
+            selfTest()
+            true
+        } catch (e: TseLoginException) {
+            if (e.code != CLIENT_NOT_REGISTERED) throw e
+            false
+        }
+
+        override suspend fun setUpForPrinter() {
+            call("SetUpForPrinter", timeoutMs = TseTransport.LONG_TIMEOUT_MS)
+            loggedIn = false
+        }
     }
 
     /** Bringt die TSE in Betriebsbereitschaft: Self-Test, TimeAdmin-Anmeldung, Zeit – jeweils nur wenn nötig. */
@@ -384,6 +459,19 @@ class EpsonTse(
         private const val HOST_AUTH_FAILED = "OTHER_ERROR_HOST_AUTHENTICATION_FAILED"
 
         fun isMockSerial(serialHex: String?): Boolean = serialHex?.uppercase()?.startsWith(MOCK_SERIAL_PREFIX) == true
+
+        const val ADMIN_USER = "Administrator"
+
+        /**
+         * Client-ID nach JSON-Spezifikation (S. 16): ASN.1-PrintableString (A–Z, a–z, 0–9, Leerzeichen und ' ( ) + , - . / : = ?),
+         * also u. a. kein Unterstrich; „EPSON“ ist nicht erlaubt. Längengrenze vorsichtshalber 30 Zeichen.
+         */
+        fun validateClientId(clientId: String) {
+            val ok = clientId.isNotBlank() && clientId.length <= 30 &&
+                clientId.all { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it in " '()+,-./:=?" } &&
+                !clientId.contains("EPSON", ignoreCase = true)
+            if (!ok) throw TseException("Kassen-ID „$clientId“ ist für die TSE nicht zulässig (erlaubt: Buchstaben, Ziffern, Leerzeichen und ' ( ) + , - . / : = ?; kein „_“, kein „EPSON“, max. 30 Zeichen)")
+        }
 
         /** Anmelde-Hash wie bei Epson: Base64(SHA-256(UTF-8(challenge + secret))). */
         fun hash(challenge: String, secret: String): String =

@@ -23,8 +23,13 @@ nachträglich änderbaren Kassenbuchzeilen. Korrekturen erfolgen nur durch Gegen
 Im *Kassenbuch* stehen für den gewählten Monat bereit:
 - **… speichern** – Datei an einem frei wählbaren Ort ablegen (USB-Stick, Cloud-Ordner, Gerät)
 - **… teilen** – über das Android-Teilen-Menü (E-Mail, Messenger, Google Drive, Quick Share …)
-- **An Steuerberater senden** – Kassenbuch und DATEV zusammen als E-Mail-Anhang; die Empfängeradresse
-  kommt aus *Einstellungen → DATEV → E-Mail Steuerberater*
+- **An Steuerberater senden** – Kassenbuch und DATEV zusammen über das Teilen-Menü; ist unter
+  *Einstellungen → DATEV → E-Mail Steuerberater* eine Adresse eingetragen, wird sie vorausgefüllt,
+  sonst wählt man den Empfänger selbst
+
+**Alle Exporte funktionieren ohne Angaben zum Steuerberater** (E-Mail, Beraternummer, Mandantennummer).
+Rechtlich sind diese Angaben nicht vorgeschrieben (GoBD, KassenSichV und DSFinV-K verlangen sie nicht).
+Für die DSFinV-K sind dagegen die Unternehmensdaten Pflicht (Name, Anschrift, Steuernummer oder USt-IdNr.).
 
 Der DSFinV-K-Export (*Abschluss*) kann ebenfalls gespeichert oder geteilt werden. Zusätzlich legt der
 **automatische Monatsexport** alle drei Dateien je Monat im Sicherungsordner ab (siehe Datensicherung.md).
@@ -50,13 +55,16 @@ Vorbelegt sind **Vorschläge für SKR03**. Sie müssen mit dem Steuerberater abg
 | Geldtransit / Einzahlung | 1360 | |
 | Privatentnahme / -einlage | 1800 / 1890 | |
 | Auszahlung | 4900 | sonstige betriebliche Aufwendungen – je nach Zweck anpassen |
-| Kassendifferenz | **leer** | muss vom Steuerberater festgelegt werden; ohne Angabe kein DATEV-Export |
+| Kassendifferenz | **leer** | vom Steuerberater festzulegen; wird erst verlangt, wenn im Monat eine Kassendifferenz gebucht wurde |
 | Mehrzweckgutscheine | **leer** | Verbindlichkeit aus ausgegebenen Gutscheinen; nur nötig, wenn Mehrzweckgutscheine verkauft/eingelöst werden |
 
 Einzweckgutscheine werden bei Ausgabe auf das Erlöskonto ihres Steuersatzes gebucht (versteuert), ihre
 Einlösung als Gegenposition auf demselben Konto.
 
-Beraternummer, Mandantennummer, Wirtschaftsjahresbeginn und Sachkontenlänge sind Pflichtangaben.
+Wirtschaftsjahresbeginn und Sachkontenlänge sind vorbelegt (01.01., 4 Stellen). **Beraternummer und
+Mandantennummer sind optional:** Sie ordnen den Buchungsstapel nur beim Import in DATEV einem Mandanten zu.
+Fehlen sie, bleiben die Felder in der Kopfzeile (Zeile 1 der Datei) leer; der Steuerberater ergänzt sie beim
+Import bzw. in der Kopfzeile. Die App weist beim Export darauf hin.
 
 > Der DATEV-Export ist gegen die EXTF-Spezifikation aufgebaut, muss aber beim ersten Mal vom Steuerberater
 > testweise importiert werden. Erst nach dessen Bestätigung produktiv nutzen.
