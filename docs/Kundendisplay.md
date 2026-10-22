@@ -15,7 +15,11 @@ Kassen-Tablet (Any.POS, Port 8090) ──WLAN──► Display-Gerät (Chrome, S
    Bon scannen bzw. die Adresse abtippen).
 3. Display-Gerät:
    - im **selben WLAN** wie die Kasse,
-   - Seite im Browser öffnen → *Zum Startbildschirm hinzufügen* (Vollbild),
+   - Seite im Browser öffnen → **Vollbild**: oben rechts „⛶ Vollbild“ oder einfach einmal auf die Seite tippen
+     (Browser erlauben Vollbild nur nach einer Berührung; nach dem Neuladen der Seite einmal erneut tippen).
+     iPhone: Safari kennt kein Vollbild für Webseiten → *Teilen → Zum Home-Bildschirm*, dann von dort öffnen,
+   - Hoch- und Querformat werden unterstützt (Schriftgrößen richten sich nach der kürzeren Bildschirmseite;
+     geprüft für Handy 360×640 bis Tablet 1280×800, jeweils hoch und quer),
    - Bildschirm-Zeitlimit auf das Maximum bzw. „beim Laden aktiv lassen“ (die Seite kann den Bildschirm nicht selbst
      wach halten – das erlauben Browser nur über HTTPS),
    - optional *Bildschirm anheften* (Android) bzw. *Geführter Zugriff* (iOS), damit der Kunde die Seite nicht verlässt.
