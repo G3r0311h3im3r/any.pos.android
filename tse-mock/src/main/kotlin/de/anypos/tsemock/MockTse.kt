@@ -150,8 +150,8 @@ class MockTse(val config: MockConfig = MockConfig()) {
             return
         }
         if (type != "TSE") throw MockTseError("JSON_ERROR_UNEXPECTED_STORAGE_TYPE")
-        val vendor = storage.str("vendor")
-        if (!vendor.isNullOrEmpty() && vendor != VENDOR) throw MockTseError("JSON_ERROR_UNEXPECTED_STORAGE_VENDOR")
+        // Streng: Clients müssen vendor = vendorType aus GetStorageInfo mitsenden (wie die praxiserprobte Anbindung)
+        if (storage.str("vendor") != VENDOR) throw MockTseError("JSON_ERROR_UNEXPECTED_STORAGE_VENDOR")
     }
 
     private fun execute(fn: String, input: JsonObject): JsonObject? = when (fn) {

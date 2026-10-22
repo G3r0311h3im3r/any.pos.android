@@ -19,6 +19,8 @@ import java.util.Base64
 class EpsonTse(
     private val transport: TseTransport,
     @Suppress("unused") private val clientId: () -> String,
+    /** Wartezeit der TSE je Kommando (ePOS `<timeout>`). */
+    private val commandTimeoutMs: Int = TseTransport.DEFAULT_TIMEOUT_MS,
 ) : Tse {
 
     @Volatile private var info: EpsonStorageInfo? = null
@@ -66,7 +68,7 @@ class EpsonTse(
 
     private suspend fun call(function: String, input: Map<String, Any?> = emptyMap(), common: Boolean = false): JsonObject {
         val vendor = if (common) "" else (info ?: storageInfo()).vendorType
-        val answer = transport.operate(EpsonJson.request(function, input, common, vendor))
+        val answer = transport.operate(EpsonJson.request(function, input, common, vendor), commandTimeoutMs)
         return EpsonJson.output(function, answer)
     }
 

@@ -6,7 +6,6 @@ import de.anypos.tse.TseTransportException
 import de.anypos.tsemock.Fault
 import de.anypos.tsemock.MockConfig
 import de.anypos.tsemock.MockTse
-import de.anypos.tsemock.MockTseServer
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -15,18 +14,16 @@ import org.junit.Assert.fail
 import org.junit.Test
 import java.util.Base64
 
-/** Rauchtest: der echte Transport der App gegen den Mock-Server aus `:tse-mock` (keine echte TSE). */
+/** Rauchtest: der echte Transport der App gegen den Mock-Server aus `:tse-mock` (keine echte TSE, ohne Schreibschutz). */
 class TransportAgainstMockTest {
 
-    private val mock = MockTse(MockConfig())
-    private val server = MockTseServer(mock).start()
+    private val f = MockTseFixture()
+    private val mock get() = f.mock
 
-    @After fun tearDown() = server.close()
-
-    private fun transport() = EposXmlSocketTransport("127.0.0.1", server.port, connectTimeoutMs = 2_000, handshakeTimeoutMs = 2_000, log = {})
+    @After fun tearDown() = f.close()
 
     private fun request(fn: String, input: String = "", storage: String = "TSE") =
-        """{"storage":{"type":"$storage","vendor":"TSE1"},"function":"$fn","input":{$input},"compress":{"required":false,"type":""}}"""
+        """{"storage":{"type":"$storage","vendor":"${if (storage == "TSE") "TSE1" else ""}"},"function":"$fn","input":{$input},"compress":{"required":false,"type":""}}"""
 
     private fun field(json: String, key: String) = Regex("\"$key\"\\s*:\\s*\"?([^\",}]*)").find(json)!!.groupValues[1]
 
@@ -42,7 +39,7 @@ class TransportAgainstMockTest {
     private fun startInput() = """"clientId":"KASSE-01","processData":"","processType":"Kassenbeleg-V1","additionalData":"""""
 
     @Test fun saleRoundTrip() = runBlocking<Unit> {
-        val t = transport()
+        val t = f.rawTransport()
         val info = t.call("GetStorageInfo", storage = "COMMON")
         assertEquals("TSE1", field(info, "vendorType"))
         t.login()
@@ -55,13 +52,13 @@ class TransportAgainstMockTest {
     }
 
     @Test fun tseLockedForOthersAfterDropUntilReconnect() = runBlocking<Unit> {
-        val a = transport()
+        val a = f.rawTransport()
         a.call("GetStorageInfo", storage = "COMMON")
-        server.dropAllConnections()
+        f.server.dropAllConnections()
         Thread.sleep(100)
 
         // Ein anderer Client bekommt die TSE während des Sperrfensters nicht – sicher nicht ausgeführt
-        try { transport().open(); fail() } catch (e: TseTransportException) {
+        try { f.rawTransport().open(); fail() } catch (e: TseTransportException) {
             assertTrue(e !is TseResultUnknownException)
             assertTrue(e.message!!, e.message!!.contains("DEVICE_IN_USE"))
         }
@@ -72,9 +69,9 @@ class TransportAgainstMockTest {
     }
 
     @Test fun dropAfterExecuteIsUnknownAndVisibleInStartedList() = runBlocking<Unit> {
-        val t = transport()
+        val t = f.rawTransport()
         t.login()
-        server.injectFault(Fault.DROP_AFTER_EXECUTE, "StartTransaction")
+        f.server.injectFault(Fault.DROP_AFTER_EXECUTE, "StartTransaction")
         try { t.operate(request("StartTransaction", startInput())); fail() } catch (e: TseResultUnknownException) {
             assertEquals("StartTransaction", e.function)
         }
@@ -86,9 +83,9 @@ class TransportAgainstMockTest {
     }
 
     @Test fun dropBeforeExecuteIsAlsoUnknownButNothingStarted() = runBlocking<Unit> {
-        val t = transport()
+        val t = f.rawTransport()
         t.login()
-        server.injectFault(Fault.DROP_BEFORE_EXECUTE, "StartTransaction")
+        f.server.injectFault(Fault.DROP_BEFORE_EXECUTE, "StartTransaction")
         try { t.operate(request("StartTransaction", startInput())); fail() } catch (_: TseResultUnknownException) {}
         // Aus Sicht der Kasse nicht unterscheidbar – deshalb Abgleich über die Liste statt Wiederholung
         assertTrue(t.call("GetStartedTransactionList", """"clientId":"KASSE-01"""").contains("[]"))
