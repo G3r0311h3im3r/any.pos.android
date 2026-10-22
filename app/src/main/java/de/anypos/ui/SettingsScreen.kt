@@ -106,10 +106,17 @@ fun SettingsScreen(container: AppContainer, user: User) {
         HorizontalDivider()
 
         Text("Kartenzahlung", style = MaterialTheme.typography.titleMedium)
-        choice(Key.CARD_TERMINAL, listOf("none" to "ohne Terminal (nur buchen)", "simulated" to "Simulation (nur Test!)"))
-        Text("SumUp (Solo, Solo Lite) folgt mit der SDK-Anbindung. Die Simulation zeigt den Ablauf mit Terminal: genehmigt, " +
-            "abgelehnt, abgebrochen, Status unbekannt.", style = MaterialTheme.typography.bodySmall)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { field(Key.SUMUP_AFFILIATE_KEY, "SumUp Affiliate Key", 380) }
+        choice(Key.CARD_TERMINAL, listOfNotNull(
+            "none" to "ohne Terminal (nur buchen)",
+            ("sumup" to "SumUp (Solo, Solo Lite)").takeIf { SumUpSupport.AVAILABLE },
+            "simulated" to "Simulation (nur Test!)",
+        ))
+        Text("Die Simulation zeigt den Ablauf mit Terminal (genehmigt, abgelehnt, abgebrochen, Status unbekannt) ohne Gerät.",
+            style = MaterialTheme.typography.bodySmall)
+        if (SumUpSupport.AVAILABLE && v(Key.CARD_TERMINAL) == "sumup") {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { field(Key.SUMUP_AFFILIATE_KEY, "SumUp Affiliate Key", 380) }
+            SumUpSection(container, user) { message = it }
+        }
         choice(Key.CARD_MANUAL_FALLBACK, listOf("true" to "Notfall: ohne Terminal buchen erlaubt", "false" to "keine Buchung ohne Terminal"))
         HorizontalDivider()
 

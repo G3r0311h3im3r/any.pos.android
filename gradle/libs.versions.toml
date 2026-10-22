@@ -13,6 +13,8 @@ robolectric = "4.17"
 androidxTestCore = "1.7.0"
 serializationJson = "1.12.0"
 zxing = "3.5.3"
+sumup = "7.1.0"
+desugarJdkLibs = "2.1.5"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -35,6 +37,8 @@ robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "
 androidx-test-core = { group = "androidx.test", name = "core-ktx", version.ref = "androidxTestCore" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serializationJson" }
 zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
+sumup-merchant-sdk = { group = "com.sumup", name = "merchant-sdk", version.ref = "sumup" }
+desugar-jdk-libs = { group = "com.android.tools", name = "desugar_jdk_libs", version.ref = "desugarJdkLibs" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

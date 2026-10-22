@@ -272,7 +272,10 @@ class PosViewModel(private val c: AppContainer, private val user: User) : ViewMo
 
     // --- Kartenzahlung (Terminal)
 
-    private val terminal get() = c.settings[Key.CARD_TERMINAL]
+    /** Eingestelltes Terminal; SumUp nur, wenn es in diesem Build enthalten ist (sonst wie „ohne Terminal“). */
+    private val terminal get() = c.settings[Key.CARD_TERMINAL].let {
+        if (it == CardTerminals.SUMUP && !SumUpSupport.AVAILABLE) CardTerminals.NONE else it
+    }
 
     /** Laufender Auftrag ans Terminal; die Kassenansicht startet damit das Gerät (SumUp bzw. Simulation). */
     var cardRequest by mutableStateOf<CardPaymentRequest?>(null)

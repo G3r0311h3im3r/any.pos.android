@@ -6,7 +6,7 @@
 |---|---|
 | **ohne Terminal (nur buchen)** | wie bisher: „Karte“ bucht die Zahlung, das Kartengerät wird getrennt bedient |
 | **Simulation (nur Test!)** | zeigt den Ablauf mit Terminal; Ergebnis wählbar (genehmigt, abgelehnt, abgebrochen, unbekannt) |
-| **SumUp** (Solo, Solo Lite) | folgt (Etappe B, SumUp Reader SDK) |
+| **SumUp** (Solo, Solo Lite) | vorbereitet, **standardmäßig nicht im Build** (siehe unten); SumUp Reader SDK, Lesegerät per Bluetooth |
 
 ## Ablauf mit Terminal
 
@@ -35,11 +35,33 @@ Trinkgeld geht an SumUp getrennt (Betrag ohne Trinkgeld + Trinkgeld); SumUps eig
 
 Protokoll: `KARTE_START`, `KARTE_ERGEBNIS`, `KARTE_GEKLAERT`, `KARTE_UNTERBROCHEN`, `KARTE_OHNE_TERMINAL`.
 
-## Etappe B: SumUp Reader SDK
+## SumUp Reader SDK (Etappe B, vorbereitet 22.10.2026 – Test mit Gerät steht aus)
 
-- Bibliothek `com.sumup:merchant-sdk` (Repository `https://maven.sumup.com/releases`), Lesegeräte Solo/Solo Lite per
-  Bluetooth; Anmeldung mit dem SumUp-Konto in der App; Checkout mit `foreignTransactionId` = Referenz, `tip(...)`.
-- SDK 7.x setzt `targetSdk` 36 voraus → Any.POS von 35 auf 36 anheben (Verhaltensänderungen Android 16 prüfen).
+**Nicht im Standard-Build** (Entscheidung 22.10.2026): Der SumUp-Code liegt unter `app/src/sumup/java`, im normalen
+Build wird `app/src/nosumup/java` verwendet (kein SDK, keine Bluetooth-/Standortrechte, „SumUp“ erscheint nicht in den
+Einstellungen, APK ca. 3 MB). Einschalten beim Bauen:
+
+    ./gradlew :app:assembleRelease -Panypos.sumup=true          (Bash)
+    .\gradlew.bat :app:assembleRelease "-Panypos.sumup=true"    (PowerShell: Anführungszeichen nötig)
+
+Im Emulator wurde mit eingeschaltetem SDK geprüft: Anmeldung bei SumUp (Händler M7R8YXW3, Affiliate Key für
+`de.anypos`), Bezahlvorgang ohne Lesegerät → „abgelehnt, nichts abgebucht“.
+
+Tap to Pay (Smartphone/Tablet als Terminal) ist ein eigenes SumUp-SDK mit Zugang nur auf Anfrage, NFC am Kassen-Tablet,
+`targetSdk` 36 und gesperrten Entwickleroptionen – zurückgestellt.
+
+- Bibliothek `com.sumup:merchant-sdk:7.1.0` (Repository `https://maven.sumup.com/releases`, nur für die Gruppen
+  `com.sumup.*` und `net.sf.smc` freigegeben). Verlangt Core Library Desugaring; `targetSdk` 35 genügt.
+- Das APK wächst dadurch von ca. 3 MB auf ca. 35 MB. Neue Berechtigungen aus dem SDK: Bluetooth (Scan/Connect),
+  Standort, Netzwerkstatus, Wake-Lock, Vordergrunddienst, Start nach dem Booten.
+- *Einstellungen → Kartenzahlung → SumUp*: Affiliate Key eintragen und **Speichern**, dann **Bei SumUp anmelden**
+  (Anmeldemaske von SumUp in der App), **Lesegerät einrichten** (Solo/Solo Lite koppeln), **Abmelden**.
+- Bezahlvorgang: `total` = Betrag ohne Trinkgeld, `tip` = Trinkgeld, `foreignTransactionId` = Referenz,
+  Wiederholungsstrategie aktiv (bei Verbindungsabbruch „Status unbekannt“ statt „fehlgeschlagen“), Erfolgsbildschirm
+  von SumUp übersprungen. Der Vorgang startet je Versuch genau einmal (auch bei Bildschirmdrehung).
+- Auswertung (`payment/SumUpResults.kt`): **abgelehnt** nur, wenn sicher nichts abgebucht wurde (Anmeldung fehlt,
+  Bluetooth/Standort aus, Karte abgelehnt …). **Unbekannt** bei unbekanntem Status, schon vorhandener Referenz,
+  fehlender Rückgabe, Erfolg ohne Transaktionscode oder **abweichendem Betrag**.
 - Später möglich: Status bei „unbekannt“ automatisch über die SumUp-API abfragen, automatische Erstattung,
   Offline-Zahlungen (Solo Lite, Freischaltung durch SumUp).
 
@@ -55,4 +77,5 @@ Protokoll: `KARTE_START`, `KARTE_ERGEBNIS`, `KARTE_GEKLAERT`, `KARTE_UNTERBROCHE
 
 `payment/CardPayments.kt` (Versuche, Ergebnis, Klärung, Wiederanlauf), Tabelle `card_attempt` (DB-Version 4),
 `Payment.providerTxCode/cardScheme/cardLast4`, `PosViewModel` (Ablauf), `ui/CardDialogs.kt`,
-`ui/CardTerminalLauncher.kt` (Etappe B). Tests: `CardPaymentsTest`.
+`ui/CardTerminalLauncher.kt` (SumUp-Bezahlvorgang), `ui/SumUpSettings.kt`, `payment/SumUpResults.kt`.
+Tests: `CardPaymentsTest`, `SumUpResultsTest`.

@@ -12,9 +12,15 @@ val signing = rootProject.file("keystore.properties").takeIf { it.exists() }?.le
     Properties().apply { f.inputStream().use { load(it) } }
 }
 
+// SumUp-Kartenterminal: vorbereitet (src/sumup), standardmäßig nicht im Build – das SDK vergrößert das APK von ca. 3
+// auf ca. 35 MB und bringt Bluetooth-/Standortrechte mit. Einschalten: ./gradlew … -Panypos.sumup=true
+val withSumUp = providers.gradleProperty("anypos.sumup").orNull == "true"
+
 android {
     namespace = "de.anypos"
     compileSdk = 37
+
+    sourceSets.getByName("main").kotlin.directories.add(if (withSumUp) "src/sumup/java" else "src/nosumup/java")
 
     defaultConfig {
         applicationId = "de.anypos"
@@ -46,6 +52,8 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // vom SumUp-SDK verlangt (java.time u. a. auf älteren Android-Versionen)
+        isCoreLibraryDesugaringEnabled = true
     }
     testOptions {
         unitTests.isIncludeAndroidResources = true
@@ -77,6 +85,9 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     // QR-Codes auf dem Bildschirm (Kopplung Kundendisplay, später eBon); Apache-2.0
     implementation(libs.zxing.core)
+    // Kartenterminal SumUp Solo/Solo Lite (Reader SDK, Bluetooth); Nutzung nach SumUp-Entwicklerbedingungen
+    if (withSumUp) implementation(libs.sumup.merchant.sdk)
+    coreLibraryDesugaring(libs.desugar.jdk.libs)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     testImplementation(libs.junit)

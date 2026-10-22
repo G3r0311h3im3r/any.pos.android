@@ -51,6 +51,8 @@ class AnyPosApp : Application() {
     override fun onCreate() {
         super.onCreate()
         // Vorbereitete Wiederherstellung übernehmen, bevor die Datenbank geöffnet wird
+        // SumUp Reader SDK (Kartenterminal), nur wenn im Build enthalten; muss in Application.onCreate laufen
+        de.anypos.ui.SumUpSupport.init(this)
         val previous = BackupService.applyPendingRestore(this)
         container = AppContainer(this, restoredFrom = previous)
     }
