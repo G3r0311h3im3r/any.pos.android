@@ -192,6 +192,9 @@ fun PosScreen(container: AppContainer, user: User) {
         }
         vm.continuePayment = null
     }
+    // --- Kartenzahlung am externen Gerät (ohne Terminal-Anbindung)
+    vm.externalCard?.let { e -> ExternalCardDialog(e.amountCents, onApproved = { vm.confirmExternalCard() }, onCancel = { vm.cancelExternalCard() }) }
+
     // --- Kartenterminal
     vm.cardRequest?.let { request ->
         when (container.settings[SettingKey.CARD_TERMINAL]) {

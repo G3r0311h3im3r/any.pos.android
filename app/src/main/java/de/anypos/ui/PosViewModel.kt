@@ -292,19 +292,39 @@ class PosViewModel(private val c: AppContainer, private val user: User) : ViewMo
     /** Ungeklärte Kartenzahlungen aus früheren Vorgängen (z. B. nach Absturz), außer der gerade laufenden. */
     val unresolvedCards = c.db.cardAttempts().unresolvedFlow().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    /** Kartenzahlung am externen Gerät (ohne Terminal-Anbindung): erst nach Bestätigung „genehmigt“ buchen. */
+    data class ExternalCard(val amountCents: Long, val payments: List<PaymentInput>, val change: Long?)
+
+    var externalCard by mutableStateOf<ExternalCard?>(null)
+        private set
+
     fun payCard() {
         val total = cart.totalCents
         when {
             total == 0L -> finishPayment(emptyList(), change = null)
-            terminal == CardTerminals.NONE -> finishPayment(listOf(PaymentInput(PaymentType.CARD, "EC-Karte", total)), change = null)
+            terminal == CardTerminals.NONE ->
+                externalCard = ExternalCard(total, listOf(PaymentInput(PaymentType.CARD, "EC-Karte", total)), null)
             else -> startCard(total, cart.tipCents, emptyList(), null)
         }
     }
 
+    /** Kassierer bestätigt: Das externe Kartengerät hat genehmigt → Beleg abschließen. */
+    fun confirmExternalCard() {
+        val e = externalCard ?: return
+        externalCard = null
+        finishPayment(e.payments, e.change)
+    }
+
+    fun cancelExternalCard() { externalCard = null }
+
     /** Splitzahlung: Teilbeträge in beliebiger Kombination; Rückgeld nur aus der letzten Barzahlung. */
     fun pay(payments: List<PaymentInput>, change: Long?) {
         val cards = payments.filter { it.type != PaymentType.CASH }
-        if (terminal == CardTerminals.NONE || cards.isEmpty()) return finishPayment(payments, change)
+        if (cards.isEmpty()) return finishPayment(payments, change)
+        if (terminal == CardTerminals.NONE) {
+            externalCard = ExternalCard(cards.sumOf { it.amountCents }, payments, change)
+            return
+        }
         if (cards.size > 1) { message = "Mit Kartenterminal ist je Beleg nur ein Kartenanteil möglich."; return }
         startCard(cards.single().amountCents, 0, payments - cards.single(), change)
     }

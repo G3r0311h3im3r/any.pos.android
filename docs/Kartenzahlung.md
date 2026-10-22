@@ -4,9 +4,13 @@
 
 | Terminal | Verhalten |
 |---|---|
-| **ohne Terminal (nur buchen)** | wie bisher: „Karte“ bucht die Zahlung, das Kartengerät wird getrennt bedient |
+| **ohne Terminal (nur buchen)** | Kartengerät wird getrennt bedient (z. B. SumUp Solo, SumUp-App, EC-Terminal): „Karte“ zeigt den Betrag, **gebucht wird erst nach „Genehmigt – buchen“**; „Abbrechen“ lässt den Vorgang offen |
 | **Simulation (nur Test!)** | zeigt den Ablauf mit Terminal; Ergebnis wählbar (genehmigt, abgelehnt, abgebrochen, unbekannt) |
 | **SumUp** (Solo, Solo Lite) | vorbereitet, **standardmäßig nicht im Build** (siehe unten); SumUp Reader SDK, Lesegerät per Bluetooth |
+
+**Ohne Terminal:** Erst am Kartengerät zahlen lassen, dann bestätigen. Beide Geräte sind nicht verbunden – beim
+Tagesabschluss „Unbar“ auf dem Z-Bon mit der Tagesübersicht des Kartenanbieters vergleichen. Bei Trinkgeld den
+Gesamtbetrag eingeben, den die Kasse anzeigt.
 
 ## Ablauf mit Terminal
 

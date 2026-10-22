@@ -122,3 +122,24 @@ fun OldCardAttemptDialog(attempt: CardAttempt, onResolve: (paid: Boolean) -> Uni
         dismissButton = { TextButton(onClick = { onResolve(false) }) { Text("Nicht abgebucht") } },
     )
 }
+
+/**
+ * Kartenzahlung ohne Terminal-Anbindung: Betrag am externen Gerät eingeben; gebucht wird erst, wenn der Kassierer
+ * „genehmigt“ bestätigt – so wird kein Beleg abgeschlossen, bevor die Karte durch ist.
+ */
+@Composable
+fun ExternalCardDialog(amountCents: Long, onApproved: () -> Unit, onCancel: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text("Kartenzahlung ${Money.formatEur(amountCents)}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("1. ${Money.formatEur(amountCents)} am Kartengerät eingeben und den Kunden zahlen lassen.")
+                Text("2. Erst wenn das Gerät „genehmigt“ / „erfolgreich“ zeigt: unten bestätigen.")
+                Text("Abgelehnt oder abgebrochen? → „Abbrechen“; der Vorgang bleibt offen.", style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = { Button(onClick = onApproved) { Text("Genehmigt – buchen") } },
+        dismissButton = { TextButton(onClick = onCancel) { Text("Abbrechen") } },
+    )
+}
