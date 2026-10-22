@@ -142,6 +142,7 @@ Schritte 1–4 brauchen keine Hardware. Schritt 9 ist der erste Kontakt mit der 
 | # | Stand |
 |---|---|
 | 1 | erledigt 22.10.2026: `TseTransport`, `EposXmlSocketTransport`, 10 Protokolltests gegen Fake-Drucker. Abbruch/Timeout nach dem Senden → `TseResultUnknownException`, nie erneutes Senden; Wiedereinstieg per `<reconnect>` innerhalb 60 s. Noch an echter Hardware zu prüfen (Schritt 9): genaue Form von `<sequence>` und `<reconnect>`. |
+| 2 | erledigt 22.10.2026: Modul `tse-mock` (`MockTse` = JSON-Logik, `MockTseServer` = ePOS-Device-XML über TCP, `Main` = Konsole). Merkmale statt linearer Zustandskette (initialisiert, Clients, Admin/TimeAdmin-Anmeldung mit Challenge-Hash, Self-Test 25 h, Zeit, offene Tx, Export in Blöcken bis `EXPORT_COMPLETE`); Szenarien `FRESH`, `JTL_TAKEOVER`, `OPERATIONAL`; Fehlercodes nach Epson-Fehlerliste; Fehlerinjektion per Code (`inject`) und auf Verbindungsebene (`Fault`: Abbruch vor/nach Ausführung, keine Antwort); TSE-Sperre 60 s nach Abbruch, `<reconnect>`; `<sequence>` optional. Kennzeichnung: Seriennummer beginnt mit Bytes „MOCK“ (hex `4D4F434B`), `tseDescription` „MOCK TSE – KEIN GUELTIGER BELEG“, Zertifikat „MOCK TSE“. `writeCalls` protokolliert alles außerhalb der Leseliste (für die Schreibschutz-Tests in Schritt 3/4). 12 Mock-Tests + 4 Rauchtests der App (`TransportAgainstMockTest`). Start: `./gradlew :tse-mock:run --args="--scenario JTL_TAKEOVER"`; PINs/Secret des Mocks sind reine Testwerte. |
 
 ## Offene Punkte (vor Schritt 7 klären)
 

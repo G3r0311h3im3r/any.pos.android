@@ -13,3 +13,7 @@ captures/
 keystore.properties
 keystore/
 dist/
+
+# Ausgaben der VS-Code-Java-Erweiterung
+bin/
+.vscode/

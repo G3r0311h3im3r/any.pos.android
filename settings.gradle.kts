@@ -14,3 +14,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "AnyPOS"
 include(":app")
+include(":tse-mock")
