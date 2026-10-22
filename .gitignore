@@ -17,3 +17,6 @@ dist/
 # Ausgaben der VS-Code-Java-Erweiterung
 bin/
 .vscode/
+
+# Hersteller-Unterlagen (nicht weitergeben, nicht einchecken)
+downloads/

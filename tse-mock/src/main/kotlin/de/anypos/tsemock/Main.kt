@@ -7,7 +7,8 @@ import kotlin.system.exitProcess
 private const val USAGE = """Mock-TSE (Epson ePOS Device XML) – KEINE echte TSE, keine gültigen Belege.
 
 Aufruf: ./gradlew :tse-mock:run --args="[--port 8009] [--scenario FRESH|JTL_TAKEOVER|OPERATIONAL]
-        [--secret EPSONKEY] [--latency-ms 0] [--bound-to-other-host] [--localhost]"
+        [--secret EPSONKEY] [--latency-ms 0] [--bound-to-other-host] [--localhost] [--tls]"
+        --tls: TLS wie Port 8143 am Drucker (Testzertifikat des Mocks), Standardport dann 8143
 
 Befehle auf der Konsole:
   status                         Merkmale anzeigen (GetStorageInfo)
@@ -18,7 +19,8 @@ Befehle auf der Konsole:
   quit                           beenden"""
 
 fun main(args: Array<String>) {
-    var port = 8009
+    var port: Int? = null
+    var tls = false
     var config = MockConfig()
     var bind: InetAddress? = null // alle Schnittstellen, damit das Tablet den Dev-PC erreicht
     val it = args.iterator()
@@ -30,14 +32,17 @@ fun main(args: Array<String>) {
             "--latency-ms" -> config = config.copy(signatureLatencyMs = it.next().toLong())
             "--bound-to-other-host" -> config = config.copy(boundToOtherHost = true)
             "--localhost" -> bind = InetAddress.getLoopbackAddress()
+            "--tls" -> tls = true
             "--help", "-h" -> { println(USAGE); return }
             else -> { System.err.println("Unbekanntes Argument: $arg\n\n$USAGE"); exitProcess(2) }
         }
     }
 
     val tse = MockTse(config)
-    val server = MockTseServer(tse, port, bind) { println("${LocalTime.now().withNano(0)}  $it") }.start()
-    println("Mock-TSE lauscht auf Port ${server.port} (${bind?.hostAddress ?: "alle Schnittstellen"}), Szenario ${config.scenario}")
+    val server = MockTseServer(tse, port ?: if (tls) 8143 else 8009, bind, if (tls) MockTseServer.tlsContext() else null) {
+        println("${LocalTime.now().withNano(0)}  $it")
+    }.start()
+    println("Mock-TSE lauscht auf Port ${server.port}${if (tls) " (TLS)" else ""} (${bind?.hostAddress ?: "alle Schnittstellen"}), Szenario ${config.scenario}")
     println("Seriennummer (hex): ${tse.serialNumber.joinToString("") { "%02X".format(it) }}")
     println("Testwerte: Admin-PIN ${config.adminPin}, TimeAdmin-PIN ${config.timeAdminPin}, Secret ${config.sharedSecret}")
     println("'help' zeigt die Befehle.")

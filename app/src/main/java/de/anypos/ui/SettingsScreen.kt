@@ -111,7 +111,7 @@ fun SettingsScreen(container: AppContainer, user: User) {
             style = MaterialTheme.typography.bodySmall)
         if (v(Key.TSE_MODE) == "epson") {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                field(Key.TSE_HOST, "TSE-Host (leer = Drucker-IP)"); field(Key.TSE_PORT, "Port", 120)
+                field(Key.TSE_HOST, "TSE-Host (leer = Drucker-IP)"); field(Key.TSE_PORT, "Port (leer = Standard)", 200)
             }
             TseEpsonSection(container, user) { message = it }
         }

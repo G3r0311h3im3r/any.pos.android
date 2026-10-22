@@ -112,8 +112,10 @@ Tse (Interface, vorhanden)
 
 | Key | Default | Zweck |
 |---|---|---|
-| `TSE_HOST` | `192.168.1.50` | IP/Hostname des Druckers (TSE-Host) |
-| `TSE_PORT` | `8009` | ePOS-Device-XML-Port |
+| `TSE_HOST` | `""` | IP/Hostname des Druckers (TSE-Host); leer = `PRINTER_HOST` |
+| `TSE_PORT` | `""` | ePOS-Device-XML-Port; leer = 8143 mit TLS, 8009 ohne |
+| `TSE_TLS` | `true` | TLS zum Drucker; aus nur für Mock/Development-TSE (Warndialog, protokolliert) |
+| `TSE_TLS_FINGERPRINT` | `""` | vom Admin bestätigter SHA-256-Fingerabdruck des Druckerzertifikats; leer = keine Verbindung |
 | `TSE_WRITE_ENABLED` | `false` | Schreibschutz, siehe oben |
 | `TSE_TIMEADMIN_PIN` | `""` | verschlüsselt (Android Keystore, wie `BACKUP_SECRET`) |
 | `TSE_SHARED_SECRET` | `""` | verschlüsselt; leer = `EPSONKEY` |
@@ -153,11 +155,17 @@ Schritte 1–4 brauchen keine Hardware. Schritt 9 ist der erste Kontakt mit der 
 | 2 | erledigt 22.10.2026: Modul `tse-mock` (`MockTse` = JSON-Logik, `MockTseServer` = ePOS-Device-XML über TCP, `Main` = Konsole). Merkmale statt linearer Zustandskette (initialisiert, Clients, Admin/TimeAdmin-Anmeldung mit Challenge-Hash, Self-Test 25 h, Zeit, offene Tx, Export in Blöcken bis `EXPORT_COMPLETE`); Szenarien `FRESH`, `JTL_TAKEOVER`, `OPERATIONAL`; Fehlercodes nach Epson-Fehlerliste; Fehlerinjektion per Code (`inject`) und auf Verbindungsebene (`Fault`: Abbruch vor/nach Ausführung, keine Antwort); TSE-Sperre 60 s nach Abbruch, `<reconnect>`; `<sequence>` optional. Kennzeichnung: Seriennummer beginnt mit Bytes „MOCK“ (hex `4D4F434B`), `tseDescription` „MOCK TSE – KEIN GUELTIGER BELEG“, Zertifikat „MOCK TSE“. `writeCalls` protokolliert alles außerhalb der Leseliste (für die Schreibschutz-Tests in Schritt 3/4). 12 Mock-Tests + 4 Rauchtests der App (`TransportAgainstMockTest`). Start: `./gradlew :tse-mock:run --args="--scenario JTL_TAKEOVER"`; PINs/Secret des Mocks sind reine Testwerte. |
 | 3 | erledigt 22.10.2026: `ReadOnlyGuardTransport` (Leseliste inkl. `GetLogMessageCertificate`; `FinalizeExport` nur mit echtem Boolean `deleteData:false`; unlesbares JSON gesperrt; Sperre → `AuditLog` `TSE_SCHREIBSPERRE`), `EpsonJson` (`EpsonException` = Fehlercode, sicher nicht ausgeführt), `EpsonTse` lesend (`status()` über `GetStorageInfo`, `registeredClients()`, Seriennummer Base64→Hex, Mock-Erkennung; Transaktionen werfen bis Schritt 6 → TSE-Ausfall), Einstellungen `TSE_HOST` (leer = Drucker-IP), `TSE_PORT`, `TSE_WRITE_ENABLED` (Schalter nur mit Warndialog, protokolliert), „Verbindung prüfen (nur lesend)“, Bon-Hinweis „MOCK – KEIN GÜLTIGER BELEG“. TimeAdmin-PIN/Secret kommen erst in Schritt 5. 9 Tests; im Emulator gegen den Mock geprüft (Banner, Rohwerte, Warndialog; beim Mock kamen nur lesende Aufrufe an). |
 | 4 | erledigt 22.10.2026: `MockTseFixture` (Mock, Server, Transport, Schreibschutz, `EpsonTse`, gemeinsame steuerbare Uhr); bestehende Mock-Tests darauf umgestellt; `EpsonTseRobustnessTest` (7 Tests). Mock prüft `vendor` jetzt streng. `EpsonTse` hat `commandTimeoutMs`. Erkenntnis: Die TSE gehört genau einer Verbindung – die App muss eine `EpsonTse`-Instanz teilen und beim Wechsel die alte erst schließen (vor Schritt 5 in `AppContainer.tse()` absichern). |
+| 5 | erledigt 22.10.2026: `EpsonTse.ensureReady()` (Self-Test → TimeAdmin-Anmeldung → `UpdateTime`, nur wenn nötig), `withRecovery` (einmalige Wiederherstellung nur nach Fehlercode: Anmeldung abgelaufen, Self-Test, keine Zeit; nie nach „unbekannt“), `syncTime()`. Falsche PIN/Secret: genau ein Versuch, danach keine weiteren bis zur Änderung (PIN wird nicht gesperrt). `CLIENT_NOT_REGISTERED` → Hinweis auf Admin-Ablauf, kein `SetUpForPrinter`. PIN/Secret verschlüsselt (Keystore), nie im Protokoll. TLS mit Fingerabdruck (`TlsPinning`), Mock mit `--tls`. `AppContainer.tse()` schließt die alte Verbindung vor dem Neuaufbau. Oberfläche: TLS-Schalter (Warndialog), Zertifikat bestätigen, PIN/Secret setzen, „Anmeldung testen“. 14 Tests; im Emulator gegen Mock mit TLS geprüft (ohne Bestätigung keine Verbindung, nach Bestätigung Anmeldung erfolgreich, Wiedereinstieg nach Abbruch). |
 
 ## Offene Punkte (vor Schritt 7 klären)
 
-- **Vor Schritt 5:** TLS (Port 8143) für den Produktivbetrieb verpflichtend? Ab Schritt 5 wird die TimeAdmin-PIN
-  übertragen; über 8009 unverschlüsselt im LAN mitlesbar. Der Transport ist dafür vorbereitet (`socketFactory`).
+- ~~Vor Schritt 5: TLS?~~ Entschieden 22.10.2026: TLS über 8143 mit bestätigtem Zertifikats-Fingerabdruck;
+  8009 ohne TLS nur für Mock/Development-TSE. Am echten Drucker prüfen: Ist TLS (ePOS-Device SSL) aktiviert,
+  und lässt sich der Fingerabdruck auf der Statusseite/in EpsonNet Config ablesen?
+- **Vor Schritt 6:** Verbindung kann im Hintergrund wegbrechen (im Emulator beobachtet: App eingefroren, Mock
+  meldete Abbruch). Der erste Befehl danach ist „Ergebnis unbekannt“. Für Transaktionen deshalb vor
+  `StartTransaction` nach längerer Pause zuerst ein lesender Befehl (`GetStorageInfo`) als Verbindungsprobe –
+  dessen „unbekannt“ ist harmlos. Außerdem: TSE-Banner regelmäßig aktualisieren (zeigt sonst alten Fehler).
 
 - Hat JTL-POS das Shared Secret des Druckers geändert? (Ergebnis aus Schritt 9.)
 - Admin-PIN / PUK der TSE: liegen beim Betreiber? Siehe `TSE-Umzug-Betreiber.md`.

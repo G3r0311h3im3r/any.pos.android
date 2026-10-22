@@ -13,6 +13,9 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicLong
+import java.security.KeyStore
+import javax.net.ssl.KeyManagerFactory
+import javax.net.ssl.SSLContext
 import javax.xml.parsers.DocumentBuilderFactory
 
 /** Störungen auf Verbindungsebene, um Ausfallpfade („Ergebnis unbekannt“) zu prüfen. */
@@ -41,10 +44,13 @@ class MockTseServer(
     val tse: MockTse,
     port: Int = 0,
     bindAddress: InetAddress? = InetAddress.getLoopbackAddress(),
+    /** TLS wie Port 8143 am Drucker; null = Klartext wie Port 8009. */
+    tls: SSLContext? = null,
     private val log: (String) -> Unit = {},
 ) : Closeable {
 
-    private val server = ServerSocket(port, 50, bindAddress)
+    private val server: ServerSocket =
+        tls?.serverSocketFactory?.createServerSocket(port, 50, bindAddress) ?: ServerSocket(port, 50, bindAddress)
     val port: Int get() = server.localPort
 
     private val lock = Any()
@@ -200,6 +206,14 @@ class MockTseServer(
 
     companion object {
         const val DEVICE_ID = "local_TSE"
+
+        /** TLS-Kontext mit dem festen Testzertifikat des Mocks („MOCK TSE – KEIN GUELTIGES ZERTIFIKAT“). */
+        fun tlsContext(): SSLContext {
+            val ks = KeyStore.getInstance("PKCS12")
+            MockTseServer::class.java.getResourceAsStream("/mock-tse.p12")!!.use { ks.load(it, "mocktse".toCharArray()) }
+            val kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm()).apply { init(ks, "mocktse".toCharArray()) }
+            return SSLContext.getInstance("TLS").apply { init(kmf.keyManagers, null, null) }
+        }
 
         private val factory = DocumentBuilderFactory.newInstance().apply {
             isExpandEntityReferences = false

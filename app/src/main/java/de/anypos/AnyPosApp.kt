@@ -3,6 +3,8 @@ package de.anypos
 import android.app.Application
 import android.content.Context
 import de.anypos.backup.BackupService
+import de.anypos.backup.KeystoreSecretStore
+import de.anypos.backup.SecretStore
 import de.anypos.data.PosDatabase
 import de.anypos.data.Role
 import de.anypos.data.User
@@ -20,12 +22,16 @@ import de.anypos.tse.EpsonTse
 import de.anypos.tse.NoTse
 import de.anypos.tse.ReadOnlyGuardTransport
 import de.anypos.tse.SimulatedTse
+import de.anypos.tse.TlsPinning
 import de.anypos.tse.Tse
+import de.anypos.tse.TseCredentials
+import de.anypos.tse.TseLoginException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
+import javax.net.SocketFactory
 
 class AnyPosApp : Application() {
     lateinit var container: AppContainer
@@ -51,18 +57,42 @@ class AppContainer(context: Context, private val restoredFrom: String? = null) {
     private var tseConfig: String? = null
     private var tseInstance: Tse = NoTse()
 
+    /** Ablage für PIN/Secret der TSE (Android-Keystore). */
+    val secrets: SecretStore = KeystoreSecretStore()
+
     /** TSE-Host: eigener Eintrag oder, wenn leer, der Netzwerkdrucker. */
     fun tseHost(): String = settings[Key.TSE_HOST].ifBlank { settings[Key.PRINTER_HOST] }
 
-    /** Liefert die TSE passend zu den Einstellungen; bei Änderung von Modus, Host oder Port wird neu aufgebaut. */
+    fun tseTls(): Boolean = settings[Key.TSE_TLS] != "false"
+
+    /** Port: eigener Eintrag oder 8143 (TLS) bzw. 8009 (ohne TLS). */
+    fun tsePort(): Int = settings[Key.TSE_PORT].toIntOrNull() ?: if (tseTls()) 8143 else 8009
+
+    private suspend fun tseCredentials(): TseCredentials? {
+        val pin = settings[Key.TSE_TIMEADMIN_PIN].ifBlank { return null }
+        val secret = settings[Key.TSE_SHARED_SECRET]
+        return try {
+            TseCredentials(secrets.decrypt(pin), if (secret.isBlank()) "" else secrets.decrypt(secret))
+        } catch (e: Exception) {
+            // z. B. nach Wiederherstellung auf einem anderen Gerät: Keystore-Schlüssel fehlt
+            throw TseLoginException("TSE-PIN/Secret nicht lesbar – bitte in den Einstellungen neu eingeben")
+        }
+    }
+
+    /**
+     * Liefert die TSE passend zu den Einstellungen; bei Änderung wird neu aufgebaut. Die TSE gehört immer genau
+     * einer Verbindung – die alte wird deshalb zuerst geschlossen, bevor die neue entsteht.
+     */
     @Synchronized
     fun tse(): Tse {
         val mode = settings[Key.TSE_MODE]
         val host = tseHost()
-        val port = settings[Key.TSE_PORT].toIntOrNull() ?: 8009
-        val config = if (mode == "epson") "epson|$host|$port" else mode
+        val port = tsePort()
+        val tls = tseTls()
+        val fingerprint = settings[Key.TSE_TLS_FINGERPRINT]
+        val config = if (mode == "epson") "epson|$host|$port|$tls|$fingerprint" else mode
         if (config != tseConfig) {
-            (tseInstance as? EpsonTse)?.let { old -> scope.launch { old.shutdown() } }
+            (tseInstance as? EpsonTse)?.let { old -> runBlocking(Dispatchers.IO) { withTimeoutOrNull(3_000) { old.shutdown() } } }
             tseInstance = when (mode) {
                 "simulated" -> runBlocking(Dispatchers.IO) {
                     SimulatedTse(
@@ -72,11 +102,16 @@ class AppContainer(context: Context, private val restoredFrom: String? = null) {
                 }
                 "epson" -> EpsonTse(
                     ReadOnlyGuardTransport(
-                        EposXmlSocketTransport(host, port),
+                        EposXmlSocketTransport(
+                            host, port,
+                            socketFactory = if (tls) TlsPinning.pinnedSocketFactory(fingerprint) else SocketFactory.getDefault(),
+                        ),
                         writeEnabled = { settings[Key.TSE_WRITE_ENABLED] == "true" },
                         onBlocked = { function -> audit.log("System", "TSE_SCHREIBSPERRE", "$function abgewiesen") },
                     ),
                     clientId = { settings[Key.REGISTER_ID] },
+                    credentials = ::tseCredentials,
+                    encrypted = tls,
                 )
                 else -> NoTse()
             }

@@ -27,8 +27,12 @@ enum class Key(val default: String) {
 
     TSE_MODE("none"),              // none | simulated | epson
     TSE_HOST(""),                  // TSE-Host (Epson-Drucker); leer = PRINTER_HOST
-    TSE_PORT("8009"),              // ePOS Device XML
+    TSE_PORT(""),                  // ePOS Device XML; leer = 8143 mit TLS, 8009 ohne
+    TSE_TLS("true"),               // TLS zum Drucker; ohne TLS ginge die TimeAdmin-PIN im Klartext übers Netz
+    TSE_TLS_FINGERPRINT(""),       // vom Admin bestätigter SHA-256-Fingerabdruck des Druckerzertifikats
     TSE_WRITE_ENABLED("false"),    // Schreibschutz: nur lesende TSE-Aufrufe, solange false
+    TSE_TIMEADMIN_PIN(""),         // mit Android-Keystore verschlüsselt, nie protokolliert
+    TSE_SHARED_SECRET(""),         // mit Android-Keystore verschlüsselt; leer = EPSONKEY
 
     DATEV_ADVISOR(""),
     DATEV_CLIENT(""),
