@@ -22,6 +22,8 @@ dann umgesetzt.**
   → Antwort `<open_device><device_id>local_TSE</device_id><code>OK</code><data_id>1</data_id></open_device>\0`
 - Kommando: `<device_data><device_id>local_TSE</device_id><data><type>operate</type><timeout>10000</timeout><requestdata>JSON</requestdata></data></device_data>\0`
   → Antwort `<data><type>onoperateresult</type><resultdata>JSON</resultdata></data>\0`
+  Ohne `<sequence>` (wie in der praxiserprobten fiskaltrust-Anbindung); JSON XML-maskiert inkl. `"` → `&quot;`.
+  Zuordnung der Antwort über `function`; nach `<reconnect>` werden nachgelieferte Antworten verworfen.
 - Schließen: `<close_device><device_id>local_TSE</device_id></close_device>\0`
 - Reconnect nach Socket-Abbruch: TSE ist 1 Minute für andere gesperrt; der alte Client darf sofort
   per `<reconnect>` mit `old_client_id`, `new_client_id`, `received_id` (letzte `data_id`) wieder rein.
@@ -29,7 +31,8 @@ dann umgesetzt.**
   ```json
   {"storage":{"type":"TSE","vendor":"TSE1"},"function":"…","input":{…},"compress":{"required":false,"type":""}}
   ```
-  Für `GetStorageInfo`: `"storage":{"type":"COMMON","vendor":""}`.
+  Für `GetStorageInfo`: `"storage":{"type":"COMMON","vendor":""}`. `vendor` für alle übrigen Aufrufe =
+  `tseInformation.vendorType` aus `GetStorageInfo`.
 - JSON-Response: `{"result":"EXECUTION_OK","function":"…","output":{…}}` oder
   `{"result":"<ErrorCode>","function":"…","error":{"fact":"…","errorinfo":"…"}}`
 - Login (Challenge-Response): `GetChallenge{userId}` → `hash = base64(sha256(challenge + sharedSecret))`,
@@ -39,22 +42,26 @@ dann umgesetzt.**
 - Transaktion: `StartTransaction{clientId,processData(b64),processType,additionalData}` →
   `{logTime,transactionNumber,serialNumber,signatureCounter,signature}`;
   `FinishTransaction{clientId,transactionNumber,processData,processType}` → `{logTime,signatureCounter,signature}`.
+  `logTime` kommt als ISO-Zeit in UTC (`2026-10-22T10:00:00Z`) und wird für DSFinV-K in Unixzeit umgerechnet;
+  `serialNumber` kommt Base64-codiert und wird als Hex ausgegeben.
   Max. 512 offene Transaktionen; `GetStartedTransactionList` liefert die offenen.
 - Timeouts (Default): Admin 15 min, TimeAdmin 8 h Inaktivität, Export 100 s. Self-Test-Status verfällt nach 25 h.
-- Export: `ArchiveExport{}` → `GetExportData{}` (max. 64 KB je Aufruf, `exportStatus` INCOMPLETE/COMPLETE, Daten base64) → `FinalizeExport{deleteData:false}`; Abbruch mit `CancelExport{}`.
+- Export: `ArchiveExport{}` → `GetExportData{}` (max. 64 KB je Aufruf, `exportStatus` `EXPORT_INCOMPLETE`/`EXPORT_COMPLETE`, Daten base64) → `FinalizeExport{deleteData:false}`; Abbruch mit `CancelExport{}`.
+- Zertifikat: `GetLogMessageCertificate{}` → `logMessageCertificate` (Base64, DER).
 - Signaturzeit ~200–500 ms → Transaktionen in Hintergrund-Coroutine, Bondruck erst nach Finish.
 
 Wichtige Fehlercodes und Reaktion (Epson-Best-Practice: nicht vorab pollen, Operation versuchen, auf Code reagieren):
 
 | Code | Reaktion |
 |---|---|
-| `OTHER_ERROR_TIMEADMIN_NOT_AUTHORIZED` | TimeAdmin neu einloggen, dann wiederholen |
-| `TSE1_ERROR_SELFTEST_NEEDED` / `TSE_ERROR_WRONG_STATUS_SELFTEST_NEEDED` | `RunTSESelfTest`, dann `UpdateTime…`, dann Re-Login, dann wiederholen |
+| `OTHER_ERROR_UNAUTHENTICATED_TIME_ADMIN_USER` / `TSE1_ERROR_AUTHENTICATION_USER_NOT_LOGGED_IN` | TimeAdmin neu einloggen (Timeout), dann wiederholen – ein zurückgegebener Code heißt: nicht ausgeführt |
+| `TSE1_ERROR_WRONG_STATE_NEEDS_SELF_TEST` / `TSE1_ERROR_WRONG_STATE_NEEDS_SELF_TEST_PASSED` | `RunTSESelfTest`, dann Re-Login, `UpdateTime…`, dann wiederholen |
+| `TSE1_ERROR_NO_TIME_SET` | TimeAdmin-Login, `UpdateTime`, dann wiederholen |
 | `TSE1_ERROR_CLIENT_NOT_REGISTERED` | Client-ID nicht registriert → Admin-Flow „TSE übernehmen“ nötig |
 | `OTHER_ERROR_HOST_AUTHENTICATION_FAILED` | Shared Secret stimmt nicht (JTL hat es ggf. geändert) → Admin-Flow |
 | `OTHER_ERROR_CURRENTLY_EXPORTING` | nach Reconnect zuerst `CancelExport` |
 | `OTHER_ERROR_UNKNOWN_STORAGE` / `OTHER_ERROR_NO_STORAGE_FOUND` | TSE nicht erkannt → Hardware prüfen, als Ausfall markieren |
-| `OTHER_ERROR_UNAUTHENTICATED_TIME_ADMIN_USER` | Timeout → Re-Login |
+| `TSE1_ERROR_CLIENT_NOT_REGISTERED` bei `RunTSESelfTest` | TSE war an anderem Host → Admin + `SetUpForPrinter` (schreibend, nur mit Freigabe) |
 
 Keine Transaktion wird bei unklarem Ergebnis blind wiederholt (Regel 4 aus `TSE-Plan.md`); stattdessen
 `GetStartedTransactionList` prüfen.
@@ -79,7 +86,7 @@ Tse (Interface, vorhanden)
    22.10.2026: direkt vor der Leitung, unabhängig von `EpsonTse`; `EposXmlSocketTransport` bleibt reiner Socket-Code).
    Standard ist `TSE_WRITE_ENABLED = false`. Dann dürfen nur
    `GetStorageInfo`, `GetChallenge`, `GetTimeOutInterval`, `GetStartedTransactionList`,
-   `GetRegisteredClientList`, `GetLastTransactionResponse` und die Export-Lesefunktionen (`ArchiveExport`,
+   `GetRegisteredClientList`, `GetLastTransactionResponse`, `GetLogMessageCertificate` und die Export-Lesefunktionen (`ArchiveExport`,
    `GetExportData`, `FinalizeExport` nur mit `deleteData:false`, `CancelExport`) passieren. Jede andere Funktion
    wirft `TseException("Schreibender TSE-Aufruf gesperrt: <function>")`, **bevor** etwas gesendet wird.
    Freischaltung nur durch Admin in den Einstellungen mit Warnhinweis; wird protokolliert (`AuditLog`).
@@ -91,8 +98,9 @@ Tse (Interface, vorhanden)
 
 - `./gradlew :tse-mock:run` → lauscht auf 8009, loggt jedes Kommando. Tablet-App zeigt per `TSE_HOST` auf den Dev-PC.
 - `testImplementation(project(":tse-mock"))` → Unit-Tests starten den Mock in-process auf einem freien Port.
-- Zustandsmaschine: `UNINITIALIZED → SETUP_DONE → ADMIN_LOGGED_IN → CLIENT_REGISTERED → TIMEADMIN_LOGGED_IN → TIME_SET → OPERATIONAL`;
-  Nebenzustände `SELFTEST_NEEDED`, `EXPORTING`, `BLOCKED_AFTER_DISCONNECT`.
+- Merkmale statt linearer Zustandskette (Entscheidung 22.10.2026): initialisiert, registrierte Clients,
+  Admin-/TimeAdmin-Anmeldung, Self-Test, Zeit, offene Transaktionen, Export, Sperre nach Abbruch – unabhängig
+  voneinander, wie die echte TSE sie in `GetStorageInfo` meldet.
 - Konfigurierbar: Startzustand (z. B. „von JTL eingerichtet, Secret geändert, Client `JTL-POS-1` registriert“), Shared Secret,
   PINs, Latenz pro Signatur, Fehlerinjektion (nächster Aufruf liefert Code X), Uhr (für 8 h / 25 h Timeouts).
 - Signaturen: ECDSA P-256 mit festem Beispielschlüssel, damit `signature`, `publicKey`, `certificate` plausibel sind
@@ -116,8 +124,8 @@ Dialog „TSE übernehmen“ abgefragt.
 ### Erweiterungen am bestehenden Modell
 
 - `TseFinish.publicKey`, `.certificate`: kommen nicht pro Transaktion, sondern aus `GetStorageInfo` /
-  `ExportCertificates`; `EpsonTse` holt sie einmal und cached sie.
-- `signatureAlgorithm = "ecdsa-plain-SHA256"`, `timeFormat = "unixTime"` (fix für Epson).
+  `GetLogMessageCertificate`; `EpsonTse` holt sie einmal und cached sie.
+- `signatureAlgorithm = "ecdsa-plain-SHA256"`, `timeFormat = "unixTime"` (fix für Epson; `logTime` aus ISO umgerechnet).
 - `StartTransaction` liefert ebenfalls `signature` und erhöht den Signaturzähler; `TseStart` kann das
   ignorieren, für DSFinV-K reicht der Finish.
 
@@ -141,7 +149,7 @@ Schritte 1–4 brauchen keine Hardware. Schritt 9 ist der erste Kontakt mit der 
 
 | # | Stand |
 |---|---|
-| 1 | erledigt 22.10.2026: `TseTransport`, `EposXmlSocketTransport`, 10 Protokolltests gegen Fake-Drucker. Abbruch/Timeout nach dem Senden → `TseResultUnknownException`, nie erneutes Senden; Wiedereinstieg per `<reconnect>` innerhalb 60 s. Noch an echter Hardware zu prüfen (Schritt 9): genaue Form von `<sequence>` und `<reconnect>`. |
+| 1 | erledigt 22.10.2026: `TseTransport`, `EposXmlSocketTransport`, 10 Protokolltests gegen Fake-Drucker. Abbruch/Timeout nach dem Senden → `TseResultUnknownException`, nie erneutes Senden; Wiedereinstieg per `<reconnect>` innerhalb 60 s. Korrektur nach Recherche (22.10.2026): kein `<sequence>` mehr, `"` als `&quot;`, Zuordnung über `function`, nach `<reconnect>` nachgelieferte Antworten verwerfen (11 Protokolltests). Noch an echter Hardware zu prüfen (Schritt 9): genaue Form der `<reconnect>`-Antwort. |
 | 2 | erledigt 22.10.2026: Modul `tse-mock` (`MockTse` = JSON-Logik, `MockTseServer` = ePOS-Device-XML über TCP, `Main` = Konsole). Merkmale statt linearer Zustandskette (initialisiert, Clients, Admin/TimeAdmin-Anmeldung mit Challenge-Hash, Self-Test 25 h, Zeit, offene Tx, Export in Blöcken bis `EXPORT_COMPLETE`); Szenarien `FRESH`, `JTL_TAKEOVER`, `OPERATIONAL`; Fehlercodes nach Epson-Fehlerliste; Fehlerinjektion per Code (`inject`) und auf Verbindungsebene (`Fault`: Abbruch vor/nach Ausführung, keine Antwort); TSE-Sperre 60 s nach Abbruch, `<reconnect>`; `<sequence>` optional. Kennzeichnung: Seriennummer beginnt mit Bytes „MOCK“ (hex `4D4F434B`), `tseDescription` „MOCK TSE – KEIN GUELTIGER BELEG“, Zertifikat „MOCK TSE“. `writeCalls` protokolliert alles außerhalb der Leseliste (für die Schreibschutz-Tests in Schritt 3/4). 12 Mock-Tests + 4 Rauchtests der App (`TransportAgainstMockTest`). Start: `./gradlew :tse-mock:run --args="--scenario JTL_TAKEOVER"`; PINs/Secret des Mocks sind reine Testwerte. |
 
 ## Offene Punkte (vor Schritt 7 klären)

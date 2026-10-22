@@ -37,6 +37,8 @@ class EposXmlSocketTransport(
     private val connectTimeoutMs: Int = 5_000,
     private val handshakeTimeoutMs: Int = 5_000,
     private val reconnectWindowMs: Long = 60_000,
+    /** Nach einem Wiedereinstieg so lange liegengebliebene Antworten abholen und verwerfen. */
+    private val reconnectDrainMs: Int = 500,
     private val clock: () -> Long = System::currentTimeMillis,
     /** Protokoll ohne Nutzdaten: nur Funktion, Dauer, Ergebnis – nie JSON (PINs, Hashes). */
     private val log: (String) -> Unit = { Log.d(TAG, it) },
@@ -47,7 +49,8 @@ class EposXmlSocketTransport(
     private var input: InputStream? = null
     private var output: OutputStream? = null
     private var deviceOpen = false
-    private var sequence = 0L
+    /** Bereits gelesener Teil einer Nachricht; bleibt bei einem Lese-Timeout erhalten, damit die Rahmung stimmt. */
+    private val pending = ByteArrayOutputStream()
 
     /** client_id der aktuellen Verbindung (vom Drucker vergeben). */
     var clientId: String? = null
@@ -76,11 +79,11 @@ class EposXmlSocketTransport(
         if (!isConnected) establish()
         if (!deviceOpen) openDevice()
 
-        val seq = ++sequence
         val started = clock()
         try {
+            // Ohne <sequence>, wie in der Praxis erprobt; Zuordnung über "function" in der Antwort
             send(
-                "<device_data><sequence>$seq</sequence><device_id>$DEVICE_ID</device_id><data>" +
+                "<device_data><device_id>$DEVICE_ID</device_id><data>" +
                     "<type>operate</type><timeout>$timeoutMs</timeout><requestdata>${escape(requestJson)}</requestdata>" +
                     "</data></device_data>",
             )
@@ -89,13 +92,16 @@ class EposXmlSocketTransport(
             throw TseResultUnknownException(function, "Senden von $function abgebrochen – Ausführung unbekannt", e)
         }
 
-        val result = awaitResult(function, seq, started + timeoutMs + RESPONSE_GRACE_MS)
+        val result = awaitResult(function, started + timeoutMs + RESPONSE_GRACE_MS)
         log("$function: ${clock() - started} ms, ${resultCode(result)}")
         result
     }
 
-    /** Liest bis zur Antwort auf Sequenz [seq]; fremde Nachrichten und Ereignisse werden übersprungen. */
-    private fun awaitResult(function: String, seq: Long, deadline: Long): String {
+    /**
+     * Liest bis zur Antwort auf [function]; Ereignisse und Antworten auf andere Funktionen (verspätet nach einem
+     * Wiedereinstieg) werden übersprungen. Es läuft immer nur ein Kommando gleichzeitig.
+     */
+    private fun awaitResult(function: String, deadline: Long): String {
         while (true) {
             val remaining = deadline - clock()
             if (remaining <= 0) {
@@ -111,10 +117,13 @@ class EposXmlSocketTransport(
             if (msg.tagName != "device_data") continue
             val data = msg.child("data") ?: continue
             if (data.text("type") != "onoperateresult") continue
-            // Schickt der Drucker eine Sequenz mit, muss sie passen
-            if (msg.text("sequence")?.let { it != seq.toString() } == true) continue
 
-            data.text("resultdata")?.let { return it }
+            data.text("resultdata")?.let { result ->
+                val answered = functionOf(result)
+                if (answered == "?" || answered == function) return result
+                log("Verspätete Antwort auf $answered verworfen")
+                continue
+            }
             val code = data.text("code")
             if (code == "DEVICE_NOT_OPEN") {
                 // Der Drucker hat das Kommando nicht an die TSE weitergegeben
@@ -189,8 +198,33 @@ class EposXmlSocketTransport(
             // Erfolgreich: Sitzung inkl. geöffnetem Gerät läuft weiter; sonst Gerät neu öffnen
             if (!ok) deviceOpen = false
             log("Wiedereinstieg ${if (ok) "erfolgreich" else "abgelehnt"}")
+            if (ok) drainStale()
         } else {
             deviceOpen = false
+        }
+    }
+
+    /**
+     * Holt Nachrichten ab, die der Drucker nach dem Wiedereinstieg nachliefert (z. B. die Antwort auf das
+     * abgebrochene Kommando), damit sie nicht dem nächsten Kommando zugeordnet werden. Das Ergebnis des
+     * abgebrochenen Kommandos bleibt unbekannt; geklärt wird es über die TSE (z. B. GetStartedTransactionList).
+     */
+    private fun drainStale() {
+        val deadline = clock() + reconnectDrainMs
+        while (true) {
+            val remaining = deadline - clock()
+            if (remaining <= 0) return
+            val msg = try {
+                readMessage(remaining.toInt())
+            } catch (e: SocketTimeoutException) {
+                return
+            } catch (e: IOException) {
+                // Noch nichts gesendet: sicher nicht ausgeführt
+                connectionLost()
+                throw TseTransportException("Verbindung nach Wiedereinstieg abgebrochen: ${e.message}", e)
+            }
+            val result = msg.child("data")?.takeIf { it.text("type") == "onoperateresult" }?.text("resultdata")
+            if (result != null) log("Nach Wiedereinstieg verworfen: Antwort auf ${functionOf(result)}")
         }
     }
 
@@ -215,6 +249,7 @@ class EposXmlSocketTransport(
 
     private fun closeSocket() {
         runCatching { socket?.close() }
+        pending.reset()
         socket = null
         input = null
         output = null
@@ -229,20 +264,21 @@ class EposXmlSocketTransport(
         out.flush()
     }
 
-    /** Liest bis zum Null-Byte; merkt sich jede data_id. */
+    /** Liest bis zum Null-Byte; merkt sich jede data_id. Ein Timeout mitten in der Nachricht verliert nichts. */
     private fun readMessage(timeoutMs: Int): Element {
         val s = socket ?: throw IOException("nicht verbunden")
         val inp = input ?: throw IOException("nicht verbunden")
         s.soTimeout = timeoutMs.coerceAtLeast(1)
-        val buf = ByteArrayOutputStream()
         while (true) {
             val b = inp.read()
             if (b == -1) throw IOException("Verbindung vom TSE-Host geschlossen")
             if (b == 0) break
-            buf.write(b)
-            if (buf.size() > MAX_MESSAGE_BYTES) throw IOException("Nachricht zu groß")
+            pending.write(b)
+            if (pending.size() > MAX_MESSAGE_BYTES) throw IOException("Nachricht zu groß")
         }
-        val element = parse(buf.toString(Charsets.UTF_8.name()))
+        val text = pending.toString(Charsets.UTF_8.name())
+        pending.reset()
+        val element = parse(text)
         element.text("data_id")?.let { lastDataId = it }
         return element
     }
@@ -271,7 +307,8 @@ class EposXmlSocketTransport(
             runCatching { setFeature("http://apache.org/xml/features/disallow-doctype-decl", true) }
         }
 
-        fun escape(s: String): String = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        /** XML-Maskierung wie in der praxiserprobten Anbindung, inklusive Anführungszeichen. */
+        fun escape(s: String): String = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
 
         fun parse(xml: String): Element = try {
             factory.newDocumentBuilder().parse(InputSource(StringReader(xml))).documentElement

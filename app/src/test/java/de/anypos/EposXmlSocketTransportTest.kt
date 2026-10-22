@@ -94,12 +94,10 @@ class EposXmlSocketTransportTest {
 
     /** requestdata aus einer device_data-Nachricht wieder lesbar machen (Gegenstück zum Escaping). */
     private fun requestData(msg: String) = Regex("<requestdata>(.*)</requestdata>", RegexOption.DOT_MATCHES_ALL)
-        .find(msg)!!.groupValues[1].replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+        .find(msg)!!.groupValues[1].replace("&quot;", "\"").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
 
-    private fun sequence(msg: String) = Regex("<sequence>(\\d+)</sequence>").find(msg)!!.groupValues[1]
-
-    private fun result(seq: String, json: String) =
-        "<device_data><sequence>$seq</sequence><device_id>local_TSE</device_id><data><type>onoperateresult</type>" +
+    private fun result(json: String) =
+        "<device_data><device_id>local_TSE</device_id><data><type>onoperateresult</type>" +
             "<success>true</success><code>SUCCESS</code><resultdata>${EposXmlSocketTransport.escape(json)}</resultdata></data></device_data>"
 
     @After fun tearDown() { printer?.stop() }
@@ -146,23 +144,24 @@ class EposXmlSocketTransportTest {
             val msg = c.read()
             seen += msg
             // Echo: Antwort enthält genau das empfangene JSON
-            c.send(result(sequence(msg), requestData(msg)))
+            c.send(result(requestData(msg)))
             Thread.sleep(200)
         }).also { printer = it }
         val answer = transport(p).operate(payload)
         assertEquals(payload, answer)
         // Auf der Leitung ist das JSON XML-sicher codiert
-        assertTrue(seen.single().contains("&amp;") && seen.single().contains("&lt;Kasse&gt;"))
+        assertTrue(seen.single().contains("&amp;") && seen.single().contains("&lt;Kasse&gt;") && seen.single().contains("&quot;"))
+        assertFalse(seen.single().contains("<sequence>"))
     }
 
     @Test fun fragmentedAnswerAfterForeignMessages() = runBlocking {
         val p = FakePrinter({ c ->
             c.hello("s1"); c.acceptOpen()
             val msg = c.read()
-            // Ereignis und Antwort mit fremder Sequenz vor der eigentlichen Antwort
+            // Ereignis und Antwort auf eine andere Funktion vor der eigentlichen Antwort
             c.send("<device_data><device_id>local_TSE</device_id><data><type>onstatus</type></data><data_id>9</data_id></device_data>")
-            c.send(result("999", """{"result":"FALSCH"}"""))
-            c.sendFragmented(result(sequence(msg), """{"result":"EXECUTION_OK","function":"GetStorageInfo","output":{}}"""))
+            c.send(result("""{"result":"FALSCH","function":"StartTransaction"}"""))
+            c.sendFragmented(result("""{"result":"EXECUTION_OK","function":"GetStorageInfo","output":{}}"""))
             Thread.sleep(200)
         }).also { printer = it }
         val t = transport(p)
@@ -202,7 +201,7 @@ class EposXmlSocketTransportTest {
                 c.send("<reconnect><code>OK</code></reconnect>")
                 val msg = c.read()                                                     // direkt Kommando B, kein open_device
                 seen += msg
-                c.send(result(sequence(msg), """{"result":"EXECUTION_OK","function":"B"}"""))
+                c.send(result("""{"result":"EXECUTION_OK","function":"B"}"""))
                 Thread.sleep(200)
             },
         ).also { printer = it }
@@ -215,8 +214,32 @@ class EposXmlSocketTransportTest {
         assertTrue(reconnect, reconnect.contains("<new_client_id>s2</new_client_id>"))
         assertTrue(reconnect, reconnect.contains("<received_id>5</received_id>"))
         // A wurde genau einmal gesendet, danach nur B
-        assertEquals(1, seen.count { it.contains("\"function\":\"A\"") })
-        assertTrue(seen[2].contains("\"function\":\"B\""))
+        assertEquals(1, seen.count { it.startsWith("<device_data>") && requestData(it).contains("\"function\":\"A\"") })
+        assertTrue(requestData(seen[2]).contains("\"function\":\"B\""))
+    }
+
+    @Test fun staleAnswerAfterReconnectIsDiscarded() = runBlocking<Unit> {
+        val p = FakePrinter(
+            { c -> c.hello("s1"); c.acceptOpen("5"); c.read(); c.close() },                // A: Abbruch
+            { c ->
+                c.hello("s2")
+                c.read()
+                c.send("<reconnect><code>OK</code></reconnect>")
+                // Drucker liefert die Antwort auf das abgebrochene A nach – gleiche Funktion wie das nächste Kommando
+                c.send(result("""{"result":"EXECUTION_OK","function":"StartTransaction","output":{"transactionNumber":1}}"""))
+                val msg = c.read()
+                seen += msg
+                c.send(result("""{"result":"EXECUTION_OK","function":"StartTransaction","output":{"transactionNumber":2}}"""))
+                Thread.sleep(200)
+            },
+        ).also { printer = it }
+        val t = EposXmlSocketTransport(
+            host = "127.0.0.1", port = p.port, connectTimeoutMs = 2_000, handshakeTimeoutMs = 2_000, reconnectDrainMs = 300, log = {},
+        )
+        try { t.operate(request("StartTransaction")); fail() } catch (_: TseResultUnknownException) {}
+        val answer = t.operate(request("StartTransaction"))
+        assertTrue(answer, answer.contains("\"transactionNumber\":2"))
+        assertEquals(1, seen.size)
     }
 
     @Test fun afterWindowExpiredFreshConnectAndOpen() = runBlocking {
@@ -228,7 +251,7 @@ class EposXmlSocketTransportTest {
                 seen += first
                 c.send("<open_device><device_id>local_TSE</device_id><code>OK</code><data_id>1</data_id></open_device>")
                 val msg = c.read()
-                c.send(result(sequence(msg), """{"result":"EXECUTION_OK"}"""))
+                c.send(result("""{"result":"EXECUTION_OK"}"""))
                 Thread.sleep(200)
             },
         ).also { printer = it }
