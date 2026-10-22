@@ -60,6 +60,7 @@ import de.anypos.data.User
 import de.anypos.domain.CartLine
 import de.anypos.domain.Key as SettingKey
 import de.anypos.domain.Money
+import de.anypos.payment.CardTerminals
 
 @Composable
 fun PosScreen(container: AppContainer, user: User) {
@@ -191,6 +192,25 @@ fun PosScreen(container: AppContainer, user: User) {
         }
         vm.continuePayment = null
     }
+    // --- Kartenterminal
+    vm.cardRequest?.let { request ->
+        when (container.settings[SettingKey.CARD_TERMINAL]) {
+            CardTerminals.SIMULATED -> SimulatedTerminalDialog(request) { vm.onCardResult(it) }
+            else -> CardTerminalLauncher(container, request) { vm.onCardResult(it) }
+        }
+    }
+    vm.cardUnknown?.let { CardUnknownDialog(it) { paid, tx -> vm.resolveCard(paid, tx) } }
+    var manualConfirm by remember { mutableStateOf(false) }
+    vm.cardFailed?.let { text ->
+        if (manualConfirm) CardManualConfirmDialog(vm.cartTotalForCard(), onConfirm = { manualConfirm = false; vm.bookCardManually() }, onDismiss = { manualConfirm = false })
+        else CardFailedDialog(text, manualAllowed = container.settings.bool(SettingKey.CARD_MANUAL_FALLBACK),
+            onManual = { manualConfirm = true }, onDismiss = { vm.cardFailed = null })
+    }
+    val oldCards by vm.unresolvedCards.collectAsState()
+    oldCards.firstOrNull { it.id != vm.cardUnknown?.id && it.id != vm.cardRequest?.attemptId && it.receiptId != vm.openReceipt?.id }?.let { a ->
+        OldCardAttemptDialog(a) { paid -> vm.resolveOldCard(a, paid) }
+    }
+
     vm.tipRequest?.let { request ->
         TipDialog(
             request, vm.tipCustomerChoice,

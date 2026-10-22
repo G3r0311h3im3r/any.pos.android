@@ -105,6 +105,14 @@ fun SettingsScreen(container: AppContainer, user: User) {
         }
         HorizontalDivider()
 
+        Text("Kartenzahlung", style = MaterialTheme.typography.titleMedium)
+        choice(Key.CARD_TERMINAL, listOf("none" to "ohne Terminal (nur buchen)", "simulated" to "Simulation (nur Test!)"))
+        Text("SumUp (Solo, Solo Lite) folgt mit der SDK-Anbindung. Die Simulation zeigt den Ablauf mit Terminal: genehmigt, " +
+            "abgelehnt, abgebrochen, Status unbekannt.", style = MaterialTheme.typography.bodySmall)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { field(Key.SUMUP_AFFILIATE_KEY, "SumUp Affiliate Key", 380) }
+        choice(Key.CARD_MANUAL_FALLBACK, listOf("true" to "Notfall: ohne Terminal buchen erlaubt", "false" to "keine Buchung ohne Terminal"))
+        HorizontalDivider()
+
         Text("TSE", style = MaterialTheme.typography.titleMedium)
         choice(Key.TSE_MODE, listOf("none" to "keine TSE", "simulated" to "Simulation (nur Test!)", "epson" to "Epson-TSE"))
         Text("Ohne zertifizierte TSE ist kein steuerlich zulässiger Betrieb möglich. Die Simulation erzeugt ungültige Belege und dient nur Tests/Schulung.",

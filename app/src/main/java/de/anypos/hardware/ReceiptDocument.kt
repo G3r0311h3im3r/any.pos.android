@@ -86,6 +86,10 @@ object ReceiptDocument {
 
         for (p in r.payments) {
             add(DocLine.Row(p.label, Money.format(p.amountCents)))
+            if (p.cardScheme != null || p.cardLast4 != null) {
+                add(DocLine.Row("  ${p.cardScheme.orEmpty()} ${p.cardLast4?.let { "****$it" }.orEmpty()}".trimEnd(), ""))
+            }
+            p.providerTxCode?.let { add(DocLine.Row("  Transaktion", it)) }
             if (p.type == PaymentType.CASH && p.givenCents != null && p.givenCents > p.amountCents) {
                 add(DocLine.Row("  gegeben", Money.format(p.givenCents)))
                 add(DocLine.Row("  Rückgeld", Money.format(p.givenCents - p.amountCents)))

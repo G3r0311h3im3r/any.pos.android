@@ -32,7 +32,16 @@ import java.math.BigDecimal
 import java.util.concurrent.ConcurrentHashMap
 import java.math.RoundingMode
 
-data class PaymentInput(val type: String, val label: String, val amountCents: Long, val givenCents: Long? = null)
+data class PaymentInput(
+    val type: String,
+    val label: String,
+    val amountCents: Long,
+    val givenCents: Long? = null,
+    /** Nur bei Kartenzahlung über ein Terminal. */
+    val providerTxCode: String? = null,
+    val cardScheme: String? = null,
+    val cardLast4: String? = null,
+)
 
 /** Rückgabe einer Menge (positiv, Tausendstel) einer Originalposition. */
 data class ReturnItem(val lineId: Long, val quantityMilli: Long)
@@ -368,7 +377,10 @@ class PosService(
     }
 
     private fun PaymentInput.toPayment(receiptId: Long) =
-        Payment(receiptId = receiptId, type = type, label = label, amountCents = amountCents, givenCents = givenCents)
+        Payment(
+            receiptId = receiptId, type = type, label = label, amountCents = amountCents, givenCents = givenCents,
+            providerTxCode = providerTxCode, cardScheme = cardScheme, cardLast4 = cardLast4,
+        )
 
     companion object {
         private const val UNKNOWN_MARK = "(Ergebnis unbekannt)"

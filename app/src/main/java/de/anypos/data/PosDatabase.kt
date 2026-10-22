@@ -9,7 +9,7 @@ import androidx.room.TypeConverter
 import androidx.room.TypeConverters
 
 /** Aktuelle Schemaversion; bei Änderungen erhöhen und AutoMigration ergänzen. */
-const val DB_VERSION = 3
+const val DB_VERSION = 4
 
 class Converters {
     @TypeConverter fun roleToString(role: Role): String = role.name
@@ -20,7 +20,7 @@ class Converters {
     entities = [
         TaxRate::class, Category::class, Article::class, User::class,
         Receipt::class, ReceiptLine::class, Payment::class, DailyClosing::class,
-        AuditEntry::class, Setting::class, ImportRun::class, TseInfo::class, Voucher::class,
+        AuditEntry::class, Setting::class, ImportRun::class, TseInfo::class, Voucher::class, CardAttempt::class,
     ],
     version = DB_VERSION,
     exportSchema = true,
@@ -29,6 +29,8 @@ class Converters {
         AutoMigration(from = 1, to = 2),
         // 2 -> 3: Retouren (Verweisart, Positionsverweis), Gutscheine
         AutoMigration(from = 2, to = 3),
+        // 3 -> 4: Kartenterminal (Transaktionscode/Karte je Zahlung, Tabelle card_attempt)
+        AutoMigration(from = 3, to = 4),
     ],
 )
 @TypeConverters(Converters::class)
@@ -42,6 +44,7 @@ abstract class PosDatabase : RoomDatabase() {
     abstract fun importRuns(): ImportRunDao
     abstract fun tseInfo(): TseInfoDao
     abstract fun vouchers(): VoucherDao
+    abstract fun cardAttempts(): CardAttemptDao
 
     companion object {
         const val VERSION = DB_VERSION

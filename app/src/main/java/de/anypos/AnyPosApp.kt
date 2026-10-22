@@ -18,6 +18,7 @@ import de.anypos.domain.PinHasher
 import de.anypos.domain.PosService
 import de.anypos.domain.SettingsRepository
 import de.anypos.export.ExportService
+import de.anypos.payment.CardPayments
 import de.anypos.hardware.PrinterService
 import de.anypos.hardware.Company
 import de.anypos.tse.ClientIdStore
@@ -199,6 +200,7 @@ class AppContainer(context: Context, private val restoredFrom: String? = null) {
             }
     }
     val closing = ClosingService(db, pos, audit)
+    val cards = CardPayments(db, audit, { settings[Key.REGISTER_ID] })
     val exports = ExportService(context.applicationContext, db, pos, settings, audit, ::company)
 
     fun company() = Company(
@@ -222,6 +224,7 @@ class AppContainer(context: Context, private val restoredFrom: String? = null) {
         }
         settings.load() // stellt sicher, dass Einstellungen vor dem ersten Vorgang geladen sind
         restoredFrom?.let { audit.log("System", "WIEDERHERSTELLUNG", "Sicherung übernommen, bisherige Datenbank aufbewahrt als $it") }
+        cards.recover() // vor dem Wiederanlauf: unterbrochene Kartenzahlungen als „ungeklärt“ markieren
         pos.recoverOpenReceipts()
         watchCustomerDisplay()
         // Abgleich mit der TSE im Hintergrund (Netzwerk), damit der Start der App nicht wartet

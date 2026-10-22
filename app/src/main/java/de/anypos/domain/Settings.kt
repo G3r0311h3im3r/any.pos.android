@@ -58,6 +58,9 @@ enum class Key(val default: String) {
     TIP_PERCENTS("5,10"),          // Prozentstufen der Abfrage
     TIP_ROUND_UP("true"),          // „Aufrunden auf volle Euro“ als weitere Stufe
     TIP_OWNER_TAX_KEY("1"),        // USt-Schlüssel für Trinkgeld an den Betrieb (1 = 19 %), mit Steuerberater abstimmen
+    CARD_TERMINAL("none"),         // none (nur buchen) | simulated (Test) | sumup
+    SUMUP_AFFILIATE_KEY(""),       // an die App-ID de.anypos gebunden; nicht im Repository
+    CARD_MANUAL_FALLBACK("true"),  // Notfall: Kartenzahlung ohne Terminal buchen (externes Gerät)
     CUSTOMER_DISPLAY("false"),     // Kundendisplay (Webseite im WLAN)
     CUSTOMER_DISPLAY_PORT("8090"),
     CUSTOMER_DISPLAY_TOKEN(""),    // zufälliger Schlüssel in der Adresse; neu erzeugen sperrt alle Displays aus

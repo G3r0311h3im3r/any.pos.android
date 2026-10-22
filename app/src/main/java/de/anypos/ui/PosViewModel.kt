@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import de.anypos.AppContainer
 import de.anypos.data.Article
+import de.anypos.data.CardAttempt
 import de.anypos.data.BusinessCase
 import de.anypos.data.VoucherType
 import de.anypos.data.PaymentType
@@ -25,6 +26,9 @@ import de.anypos.domain.Key
 import de.anypos.domain.Money
 import de.anypos.domain.PaymentInput
 import de.anypos.hardware.ReceiptDocument
+import de.anypos.payment.CardPaymentRequest
+import de.anypos.payment.CardPaymentResult
+import de.anypos.payment.CardTerminals
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -153,6 +157,7 @@ class PosViewModel(private val c: AppContainer, private val user: User) : ViewMo
 
     /** Öffnet bei Bedarf den Vorgang (TSE-Start) und ändert den Warenkorb. */
     private fun changeCart(change: (Cart) -> Cart) {
+        if (busy) { message = "Bitte warten – Zahlung läuft."; return }
         viewModelScope.launch {
             lock.withLock {
                 if (openReceipt == null) openReceipt = c.pos.open(user)
@@ -234,14 +239,15 @@ class PosViewModel(private val c: AppContainer, private val user: User) : ViewMo
     }
 
     // Jede Änderung am Warenkorb entfernt ein schon gewähltes Trinkgeld, weil sich der Betrag geändert hat
-    fun setQuantity(key: Long, qtyMilli: Long) { cart = cart.withoutTip().setQuantity(key, qtyMilli) }
+    fun setQuantity(key: Long, qtyMilli: Long) { if (busy) return; cart = cart.withoutTip().setQuantity(key, qtyMilli) }
     fun changeQuantity(key: Long, delta: Long) {
+        if (busy) return
         val line = cart.lines.firstOrNull { it.key == key } ?: return
         cart = cart.withoutTip().setQuantity(key, line.quantityMilli + delta)
     }
-    fun setPrice(key: Long, cents: Long) { cart = cart.withoutTip().setUnitPrice(key, cents) }
-    fun discountPercent(key: Long, bp: Int) { cart = cart.withoutTip().setDiscountPercent(key, bp) }
-    fun remove(key: Long) { cart = cart.remove(key).withoutTip() }
+    fun setPrice(key: Long, cents: Long) { if (busy) return; cart = cart.withoutTip().setUnitPrice(key, cents) }
+    fun discountPercent(key: Long, bp: Int) { if (busy) return; cart = cart.withoutTip().setDiscountPercent(key, bp) }
+    fun remove(key: Long) { if (busy) return; cart = cart.remove(key).withoutTip() }
 
     /** Vorgang abbrechen: wird als AVBelegabbruch protokolliert, nicht gelöscht. */
     fun abort() {
@@ -264,12 +270,110 @@ class PosViewModel(private val c: AppContainer, private val user: User) : ViewMo
         pay(listOf(PaymentInput(PaymentType.CASH, "Bar", total, givenCents.takeIf { total >= 0 })), change = if (total >= 0) givenCents - total else -total)
     }
 
-    fun payCard(label: String = "EC-Karte") =
-        if (cart.totalCents == 0L) pay(emptyList(), change = null)
-        else pay(listOf(PaymentInput(PaymentType.CARD, label, cart.totalCents)), change = null)
+    // --- Kartenzahlung (Terminal)
+
+    private val terminal get() = c.settings[Key.CARD_TERMINAL]
+
+    /** Laufender Auftrag ans Terminal; die Kassenansicht startet damit das Gerät (SumUp bzw. Simulation). */
+    var cardRequest by mutableStateOf<CardPaymentRequest?>(null)
+        private set
+    /** Ergebnis unbekannt: erst klären (bezahlt / nicht bezahlt), nie blind neu abbuchen. */
+    var cardUnknown by mutableStateOf<CardAttempt?>(null)
+        private set
+    /** Abgelehnt oder abgebrochen: Hinweis, ggf. mit „ohne Terminal buchen“. */
+    var cardFailed by mutableStateOf<String?>(null)
+    private var cardOthers: List<PaymentInput> = emptyList()
+    private var cardChange: Long? = null
+    private var cardAmount = 0L
+
+    /** Ungeklärte Kartenzahlungen aus früheren Vorgängen (z. B. nach Absturz), außer der gerade laufenden. */
+    val unresolvedCards = c.db.cardAttempts().unresolvedFlow().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun payCard() {
+        val total = cart.totalCents
+        when {
+            total == 0L -> finishPayment(emptyList(), change = null)
+            terminal == CardTerminals.NONE -> finishPayment(listOf(PaymentInput(PaymentType.CARD, "EC-Karte", total)), change = null)
+            else -> startCard(total, cart.tipCents, emptyList(), null)
+        }
+    }
 
     /** Splitzahlung: Teilbeträge in beliebiger Kombination; Rückgeld nur aus der letzten Barzahlung. */
     fun pay(payments: List<PaymentInput>, change: Long?) {
+        val cards = payments.filter { it.type != PaymentType.CASH }
+        if (terminal == CardTerminals.NONE || cards.isEmpty()) return finishPayment(payments, change)
+        if (cards.size > 1) { message = "Mit Kartenterminal ist je Beleg nur ein Kartenanteil möglich."; return }
+        startCard(cards.single().amountCents, 0, payments - cards.single(), change)
+    }
+
+    private fun startCard(amount: Long, tip: Long, others: List<PaymentInput>, change: Long?) {
+        val open = openReceipt ?: return
+        if (amount < CardTerminals.MIN_AMOUNT_CENTS) {
+            message = "Kartenzahlung am Terminal erst ab ${Money.formatEur(CardTerminals.MIN_AMOUNT_CENTS)} – bitte bar zahlen."
+            return
+        }
+        busy = true
+        viewModelScope.launch {
+            try {
+                cardOthers = others; cardChange = change; cardAmount = amount
+                cardRequest = c.cards.begin(open, amount, tip, terminal, user.name)
+            } catch (e: Exception) {
+                message = e.message
+                busy = false
+            }
+        }
+    }
+
+    /** Ergebnis vom Terminal (SumUp-SDK oder Simulation). */
+    fun onCardResult(result: CardPaymentResult) {
+        val request = cardRequest ?: return
+        cardRequest = null
+        viewModelScope.launch {
+            val attempt = c.cards.record(request, result)
+            when (result) {
+                is CardPaymentResult.Approved -> finishPayment(cardOthers + c.cards.payment(attempt), cardChange)
+                is CardPaymentResult.Declined -> { busy = false; cardFailed = "Karte abgelehnt: ${result.message}" }
+                CardPaymentResult.Cancelled -> { busy = false; cardFailed = "Kartenzahlung abgebrochen." }
+                is CardPaymentResult.Unknown -> cardUnknown = attempt
+            }
+        }
+    }
+
+    /** Unbekanntes Ergebnis geklärt: [paid] laut SumUp-App/Händlerbereich. */
+    fun resolveCard(paid: Boolean, txCode: String?) {
+        val a = cardUnknown ?: return
+        viewModelScope.launch {
+            val r = c.cards.resolve(a.id, paid, user.name, txCode,
+                if (paid) "laut SumUp-App abgebucht" else "laut SumUp-App nicht abgebucht")
+            cardUnknown = null
+            if (paid) finishPayment(cardOthers + c.cards.payment(r), cardChange)
+            else { busy = false; cardFailed = "Nicht abgebucht – erneut mit Karte versuchen oder anders bezahlen." }
+        }
+    }
+
+    /** Betrag der letzten Kartenzahlung (für die Notfall-Buchung). */
+    fun cartTotalForCard() = cardAmount
+
+    /** Notfall (Einstellung): Kartenzahlung ohne Terminal buchen, z. B. über ein externes Gerät. */
+    fun bookCardManually() {
+        cardFailed = null
+        viewModelScope.launch { c.audit.log(user.name, "KARTE_OHNE_TERMINAL", "${Money.format(cardAmount)} zu Beleg ${openReceipt?.number}") }
+        finishPayment(cardOthers + PaymentInput(PaymentType.CARD, "EC-Karte (ohne Terminal)", cardAmount), cardChange)
+    }
+
+    /** Ungeklärte Zahlung eines früheren (abgebrochenen) Vorgangs klären. */
+    fun resolveOldCard(attempt: CardAttempt, paid: Boolean) {
+        viewModelScope.launch {
+            runCatching {
+                c.cards.resolve(attempt.id, paid, user.name, null,
+                    if (paid) "abgebucht, Vorgang abgebrochen – Erstattung über SumUp auslösen" else "nicht abgebucht")
+            }.onFailure { message = it.message }
+            if (paid) message = "Bitte ${Money.formatEur(attempt.amountCents)} (Referenz ${attempt.reference}) im SumUp-Händlerbereich erstatten " +
+                "oder den Verkauf neu erfassen und dort als „ohne Terminal“ buchen."
+        }
+    }
+
+    private fun finishPayment(payments: List<PaymentInput>, change: Long?) {
         val open = openReceipt ?: return
         busy = true
         viewModelScope.launch {

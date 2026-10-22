@@ -225,3 +225,25 @@ interface ImportRunDao {
     @Query("SELECT * FROM import_run ORDER BY id DESC")
     fun all(): Flow<List<ImportRun>>
 }
+
+@Dao
+interface CardAttemptDao {
+    @Insert
+    suspend fun insert(attempt: CardAttempt): Long
+
+    @Update
+    suspend fun update(attempt: CardAttempt)
+
+    @Query("SELECT * FROM card_attempt WHERE id = :id")
+    suspend fun get(id: Long): CardAttempt?
+
+    @Query("SELECT COUNT(*) FROM card_attempt WHERE receiptId = :receiptId")
+    suspend fun countForReceipt(receiptId: Long): Int
+
+    /** Versuche ohne geklärtes Ergebnis (laufend oder unbekannt). */
+    @Query("SELECT * FROM card_attempt WHERE state IN ('PENDING', 'UNKNOWN') ORDER BY createdAt")
+    suspend fun unresolved(): List<CardAttempt>
+
+    @Query("SELECT * FROM card_attempt WHERE state IN ('PENDING', 'UNKNOWN') ORDER BY createdAt")
+    fun unresolvedFlow(): Flow<List<CardAttempt>>
+}

@@ -247,7 +247,52 @@ data class Payment(
     val label: String,
     val amountCents: Long,
     val givenCents: Long? = null,
+    /** Kartenzahlung über ein Terminal: Transaktionscode des Zahlungsdienstleisters (z. B. SumUp). */
+    val providerTxCode: String? = null,
+    /** Kartenmarke (VISA, MASTERCARD, GIROCARD …) und letzte 4 Ziffern, wie vom Terminal gemeldet. */
+    val cardScheme: String? = null,
+    val cardLast4: String? = null,
 )
+
+/**
+ * Ein Versuch, am Kartenterminal zu kassieren. Wird **vor** dem Start gespeichert; die [reference] wird nie
+ * wiederverwendet und geht als eigene Transaktions-ID an den Zahlungsdienstleister (verhindert Doppelabbuchung).
+ * Bleibt das Ergebnis unbekannt, klärt der Kassierer es, bevor erneut abgebucht wird.
+ */
+@Entity(tableName = "card_attempt", indices = [Index("reference", unique = true), Index("state")])
+data class CardAttempt(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val reference: String,
+    val receiptId: Long,
+    val receiptNumber: Long,
+    /** Gesamtbetrag einschließlich [tipCents]. */
+    val amountCents: Long,
+    val tipCents: Long,
+    val terminal: String,
+    /** [CardAttemptState] */
+    val state: String,
+    val createdAt: Long,
+    val finishedAt: Long? = null,
+    val userName: String,
+    val providerTxCode: String? = null,
+    val cardScheme: String? = null,
+    val cardLast4: String? = null,
+    /** Meldung des Terminals bzw. Entscheidung des Kassierers. */
+    val note: String? = null,
+)
+
+object CardAttemptState {
+    const val PENDING = "PENDING"
+    const val APPROVED = "APPROVED"
+    const val DECLINED = "DECLINED"
+    const val CANCELLED = "CANCELLED"
+    /** Ergebnis offen: weder abschließen noch neu abbuchen, bis geklärt. */
+    const val UNKNOWN = "UNKNOWN"
+    /** Vom Kassierer geklärt: abgebucht bzw. nicht abgebucht. */
+    const val RESOLVED_PAID = "RESOLVED_PAID"
+    const val RESOLVED_NOT_PAID = "RESOLVED_NOT_PAID"
+    val open = listOf(PENDING, UNKNOWN)
+}
 
 /** Tagesabschluss (Z-Bon). */
 @Entity(tableName = "daily_closing", indices = [Index("number", unique = true)])

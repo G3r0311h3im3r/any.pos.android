@@ -117,6 +117,7 @@ fun ReceiptsScreen(container: AppContainer, user: User) {
                 try {
                     val ret = container.pos.returnItems(r.receipt.id, items, refundType, refundLabel, user)
                     selected = ret
+                    if (refundType != PaymentType.CASH) refundHint(r)?.let { message = it }
                     if (container.printer.configured) runCatching {
                         container.printer.print(ReceiptDocument.toEscPos(ReceiptDocument.receipt(container.company(), ret), container.printer.columns,
                             openDrawer = refundType == PaymentType.CASH, drawerPin = container.settings.int(Key.DRAWER_PIN)))
@@ -135,6 +136,7 @@ fun ReceiptsScreen(container: AppContainer, user: User) {
                 try {
                     val storno = container.pos.cancel(r.receipt.id, user)
                     selected = storno
+                    refundHint(r)?.let { message = it }
                     if (container.printer.configured) {
                         container.printer.print(ReceiptDocument.toEscPos(ReceiptDocument.receipt(container.company(), storno), container.printer.columns,
                             openDrawer = storno.payments.any { it.type == de.anypos.data.PaymentType.CASH }, drawerPin = container.settings.int(Key.DRAWER_PIN)))
@@ -202,4 +204,15 @@ private fun ReturnDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Abbrechen") } },
     )
+}
+
+/**
+ * Kartenzahlungen über ein Terminal werden nicht automatisch erstattet (SumUp-SDK kann das nicht):
+ * Hinweis mit Transaktionscode, damit die Erstattung im Händlerbereich ausgelöst wird.
+ */
+private fun refundHint(original: de.anypos.data.ReceiptWithDetails): String? {
+    val card = original.payments.filter { it.providerTxCode != null }
+    if (card.isEmpty()) return null
+    return "Gebucht. Die Kartenzahlung bitte im SumUp-Händlerbereich bzw. in der SumUp-App erstatten: " +
+        card.joinToString { "${Money.formatEur(it.amountCents)}, Transaktion ${it.providerTxCode}" } + "."
 }
