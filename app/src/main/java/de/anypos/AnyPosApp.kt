@@ -15,13 +15,16 @@ import de.anypos.domain.SettingsRepository
 import de.anypos.export.ExportService
 import de.anypos.hardware.PrinterService
 import de.anypos.hardware.Company
+import de.anypos.tse.EposXmlSocketTransport
 import de.anypos.tse.EpsonTse
 import de.anypos.tse.NoTse
+import de.anypos.tse.ReadOnlyGuardTransport
 import de.anypos.tse.SimulatedTse
 import de.anypos.tse.Tse
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
 class AnyPosApp : Application() {
@@ -45,13 +48,21 @@ class AppContainer(context: Context, private val restoredFrom: String? = null) {
     val printer = PrinterService(context.applicationContext, settings)
     val backup = BackupService(context.applicationContext, db, settings, audit)
 
-    private var tseMode: String? = null
+    private var tseConfig: String? = null
     private var tseInstance: Tse = NoTse()
 
+    /** TSE-Host: eigener Eintrag oder, wenn leer, der Netzwerkdrucker. */
+    fun tseHost(): String = settings[Key.TSE_HOST].ifBlank { settings[Key.PRINTER_HOST] }
+
+    /** Liefert die TSE passend zu den Einstellungen; bei Änderung von Modus, Host oder Port wird neu aufgebaut. */
     @Synchronized
     fun tse(): Tse {
         val mode = settings[Key.TSE_MODE]
-        if (mode != tseMode) {
+        val host = tseHost()
+        val port = settings[Key.TSE_PORT].toIntOrNull() ?: 8009
+        val config = if (mode == "epson") "epson|$host|$port" else mode
+        if (config != tseConfig) {
+            (tseInstance as? EpsonTse)?.let { old -> scope.launch { old.shutdown() } }
             tseInstance = when (mode) {
                 "simulated" -> runBlocking(Dispatchers.IO) {
                     SimulatedTse(
@@ -59,10 +70,17 @@ class AppContainer(context: Context, private val restoredFrom: String? = null) {
                         sigStart = db.receipts().maxTseSig(SimulatedTse.SERIAL),
                     )
                 }
-                "epson" -> EpsonTse()
+                "epson" -> EpsonTse(
+                    ReadOnlyGuardTransport(
+                        EposXmlSocketTransport(host, port),
+                        writeEnabled = { settings[Key.TSE_WRITE_ENABLED] == "true" },
+                        onBlocked = { function -> audit.log("System", "TSE_SCHREIBSPERRE", "$function abgewiesen") },
+                    ),
+                    clientId = { settings[Key.REGISTER_ID] },
+                )
                 else -> NoTse()
             }
-            tseMode = mode
+            tseConfig = config
         }
         return tseInstance
     }

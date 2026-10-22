@@ -5,6 +5,7 @@ import de.anypos.data.DailyClosing
 import de.anypos.data.PaymentType
 import de.anypos.data.ReceiptType
 import de.anypos.data.ReceiptWithDetails
+import de.anypos.tse.EpsonTse
 import de.anypos.domain.Money
 import de.anypos.domain.TaxSummary
 import java.time.Instant
@@ -44,6 +45,7 @@ object ReceiptDocument {
         if (copy) add(DocLine.Text("*** KOPIE ***", bold = true, center = true))
         if (receipt.type == ReceiptType.TRAINING) add(DocLine.Text("*** TRAININGSBELEG ***", bold = true, center = true))
         if (receipt.tseSigAlgorithm == "SIMULATION") add(DocLine.Text("SIMULATION – KEIN GÜLTIGER BELEG", bold = true, center = true))
+        if (EpsonTse.isMockSerial(receipt.tseSerial)) add(DocLine.Text(EpsonTse.MOCK_NOTICE, bold = true, center = true))
         if (receipt.isCancellation) add(DocLine.Text("STORNO zu Beleg ${receipt.referencesReceiptNumber}", bold = true, center = true))
         if (receipt.isReturn) add(DocLine.Text("RÜCKGABE zu Beleg ${receipt.referencesReceiptNumber}", bold = true, center = true))
         add(DocLine.Row("Beleg-Nr.", receipt.number.toString()))

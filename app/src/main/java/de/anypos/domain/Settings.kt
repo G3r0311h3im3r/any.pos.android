@@ -26,6 +26,9 @@ enum class Key(val default: String) {
     OPEN_DRAWER_ON_CARD("false"),
 
     TSE_MODE("none"),              // none | simulated | epson
+    TSE_HOST(""),                  // TSE-Host (Epson-Drucker); leer = PRINTER_HOST
+    TSE_PORT("8009"),              // ePOS Device XML
+    TSE_WRITE_ENABLED("false"),    // Schreibschutz: nur lesende TSE-Aufrufe, solange false
 
     DATEV_ADVISOR(""),
     DATEV_CLIENT(""),

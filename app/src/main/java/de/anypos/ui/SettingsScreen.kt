@@ -106,9 +106,15 @@ fun SettingsScreen(container: AppContainer, user: User) {
         HorizontalDivider()
 
         Text("TSE", style = MaterialTheme.typography.titleMedium)
-        choice(Key.TSE_MODE, listOf("none" to "keine TSE", "simulated" to "Simulation (nur Test!)", "epson" to "Epson (Phase 2)"))
+        choice(Key.TSE_MODE, listOf("none" to "keine TSE", "simulated" to "Simulation (nur Test!)", "epson" to "Epson (im Aufbau)"))
         Text("Ohne zertifizierte TSE ist kein steuerlich zulässiger Betrieb möglich. Die Simulation erzeugt ungültige Belege und dient nur Tests/Schulung.",
             style = MaterialTheme.typography.bodySmall)
+        if (v(Key.TSE_MODE) == "epson") {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                field(Key.TSE_HOST, "TSE-Host (leer = Drucker-IP)"); field(Key.TSE_PORT, "Port", 120)
+            }
+            TseEpsonSection(container, user) { message = it }
+        }
         HorizontalDivider()
 
         Text("DATEV / Steuerberater (Konten mit Steuerberater abstimmen; Vorschlag SKR03)", style = MaterialTheme.typography.titleMedium)

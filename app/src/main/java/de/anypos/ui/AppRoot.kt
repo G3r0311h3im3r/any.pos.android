@@ -120,7 +120,8 @@ fun AppRoot(container: AppContainer) {
 fun TseBanner(container: AppContainer) {
     val values by container.settings.values.collectAsState()
     val mode = values[Key.TSE_MODE.name] ?: Key.TSE_MODE.default
-    val status by produceState<TseStatus?>(null, mode) { value = container.tse().status() }
+    val tseHost = values[Key.TSE_HOST.name] to values[Key.TSE_PORT.name]
+    val status by produceState<TseStatus?>(null, mode, tseHost, values[Key.PRINTER_HOST.name]) { value = container.tse().status() }
     val tse = container.tse()
     if (tse.certified && status?.available == true) return
     Surface(color = Color(0xFFB71C1C), modifier = Modifier.fillMaxWidth()) {
