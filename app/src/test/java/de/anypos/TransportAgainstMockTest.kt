@@ -1,6 +1,7 @@
 package de.anypos
 
 import de.anypos.tse.EposXmlSocketTransport
+import de.anypos.tse.MemoryClientIdStore
 import de.anypos.tse.TseResultUnknownException
 import de.anypos.tse.TseTransportException
 import de.anypos.tsemock.Fault
@@ -57,29 +58,28 @@ class TransportAgainstMockTest {
         f.server.dropAllConnections()
         Thread.sleep(100)
 
-        // Ein anderer Client bekommt die TSE während des Sperrfensters nicht – sicher nicht ausgeführt
-        try { f.rawTransport().open(); fail() } catch (e: TseTransportException) {
+        // Eine andere Anwendung bekommt die TSE während des Sperrfensters nicht – sicher nicht ausgeführt
+        try { f.rawTransport(store = MemoryClientIdStore()).open(); fail() } catch (e: TseTransportException) {
             assertTrue(e !is TseResultUnknownException)
             assertTrue(e.message!!, e.message!!.contains("DEVICE_IN_USE"))
         }
-        // Der ursprüngliche Client erkennt den Abbruch beim nächsten Kommando ...
+        // Der ursprüngliche Client erkennt den Abbruch beim nächsten Kommando: Wiedereinstieg, aber keine
+        // Nachlieferung (das Kommando kam nie an) → unbekannt ...
         try { a.call("GetStorageInfo", storage = "COMMON"); fail() } catch (_: TseResultUnknownException) {}
-        // ... und steigt danach per <reconnect> wieder ein
+        assertTrue(f.log.toString(), f.log.any { it.contains("Wiedereinstieg erfolgreich") })
+        // ... danach neue Sitzung, alte per <disconnect> beendet
         a.call("GetStorageInfo", storage = "COMMON")
     }
 
-    @Test fun dropAfterExecuteIsUnknownAndVisibleInStartedList() = runBlocking<Unit> {
+    @Test fun dropAfterExecuteAnswerIsRedelivered() = runBlocking<Unit> {
         val t = f.rawTransport()
         t.login()
         f.server.injectFault(Fault.DROP_AFTER_EXECUTE, "StartTransaction")
-        try { t.operate(request("StartTransaction", startInput())); fail() } catch (e: TseResultUnknownException) {
-            assertEquals("StartTransaction", e.function)
-        }
-        // Kein automatisches Wiederholen: genau eine Transaktion, über die Liste wiederauffindbar
-        val list = t.call("GetStartedTransactionList", """"clientId":"KASSE-01"""")
-        assertEquals(mock.startedTransactions, listOf(1L))
-        assertTrue(list, list.contains("\"startedTransactionNumberList\":[1]"))
-        assertEquals(1, mock.calls.count { it == "StartTransaction" })
+        // Antwort ging verloren, kommt aber nach dem <reconnect> nach (Handbuch S. 36) – Ergebnis bekannt
+        val answer = t.operate(request("StartTransaction", startInput()))
+        assertEquals("1", field(answer, "transactionNumber"))
+        assertEquals(listOf(1L), mock.startedTransactions)
+        assertEquals(1, mock.calls.count { it == "StartTransaction" }) // nie erneut gesendet
     }
 
     @Test fun dropBeforeExecuteIsAlsoUnknownButNothingStarted() = runBlocking<Unit> {

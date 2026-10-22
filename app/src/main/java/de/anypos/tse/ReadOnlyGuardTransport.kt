@@ -1,9 +1,6 @@
 package de.anypos.tse
 
 import de.anypos.tse.EpsonJson.string
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
 
 /** Ein schreibender Aufruf wurde vom Schreibschutz abgefangen, bevor etwas gesendet wurde. */
 class TseWriteBlockedException(val function: String) : TseException("Schreibender TSE-Aufruf gesperrt: $function")
@@ -37,24 +34,21 @@ class ReadOnlyGuardTransport(
     }
 
     companion object {
-        /** Lesende Funktionen; `FinalizeExport` zusätzlich nur mit `deleteData:false`. */
+        /**
+         * Funktionen, die ohne Anmeldung nur lesen (JSON-Spezifikation Rev. C).
+         *
+         * Bewusst NICHT enthalten: `GetRegisteredClientList`, `GetTimeOutInterval` und alle Export-Funktionen –
+         * sie verlangen eine Admin-Anmeldung (Spez. S. 18, 22, 45–53); `ArchiveExport` versetzt die TSE zudem in
+         * den Exportmodus, in dem sie nichts anderes annimmt (auch nicht von JTL-POS).
+         */
         val READ_ONLY = setOf(
-            "GetStorageInfo", "GetChallenge", "GetTimeOutInterval", "GetStartedTransactionList",
-            "GetRegisteredClientList", "GetLastTransactionResponse", "GetLogMessageCertificate",
-            "ArchiveExport", "GetExportData", "FinalizeExport", "CancelExport",
+            "GetStorageInfo", "GetChallenge", "GetStartedTransactionList",
+            "GetLastTransactionResponse", "GetLogMessageCertificate",
         )
 
         fun isReadOnly(requestJson: String): Boolean {
             val request = EpsonJson.parseObject(requestJson) ?: return false
-            val function = request.string("function") ?: return false
-            if (function !in READ_ONLY) return false
-            if (function == "FinalizeExport") {
-                val input = request["input"] as? JsonObject ?: return false
-                // Nur ein echtes JSON-Boolean, kein Text "false"
-                val delete = input["deleteData"] as? JsonPrimitive ?: return false
-                return !delete.isString && delete.booleanOrNull == false
-            }
-            return true
+            return request.string("function") in READ_ONLY
         }
     }
 }

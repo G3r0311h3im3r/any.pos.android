@@ -17,6 +17,7 @@ import de.anypos.domain.SettingsRepository
 import de.anypos.export.ExportService
 import de.anypos.hardware.PrinterService
 import de.anypos.hardware.Company
+import de.anypos.tse.ClientIdStore
 import de.anypos.tse.EposXmlSocketTransport
 import de.anypos.tse.EpsonTse
 import de.anypos.tse.NoTse
@@ -59,6 +60,13 @@ class AppContainer(context: Context, private val restoredFrom: String? = null) {
 
     /** Ablage für PIN/Secret der TSE (Android-Keystore). */
     val secrets: SecretStore = KeystoreSecretStore()
+
+    /** client_id der letzten ePOS-Sitzung, überdauert Neustarts (alte Sitzung wird dann per <disconnect> beendet). */
+    private val tseClientIds = object : ClientIdStore {
+        private val prefs = context.applicationContext.getSharedPreferences("tse_session", Context.MODE_PRIVATE)
+        override fun load(): String? = prefs.getString("client_id", null)
+        override fun save(clientId: String?) { prefs.edit().putString("client_id", clientId).apply() }
+    }
 
     /** TSE-Host: eigener Eintrag oder, wenn leer, der Netzwerkdrucker. */
     fun tseHost(): String = settings[Key.TSE_HOST].ifBlank { settings[Key.PRINTER_HOST] }
@@ -105,6 +113,7 @@ class AppContainer(context: Context, private val restoredFrom: String? = null) {
                         EposXmlSocketTransport(
                             host, port,
                             socketFactory = if (tls) TlsPinning.pinnedSocketFactory(fingerprint) else SocketFactory.getDefault(),
+                            clientIdStore = tseClientIds,
                         ),
                         writeEnabled = { settings[Key.TSE_WRITE_ENABLED] == "true" },
                         onBlocked = { function -> audit.log("System", "TSE_SCHREIBSPERRE", "$function abgewiesen") },

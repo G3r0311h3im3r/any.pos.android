@@ -111,11 +111,27 @@ class EpsonTseLoginTest {
         epson.ensureReady()
     }
 
-    @Test fun clientNotRegisteredNoAutomaticSetup() = runBlocking<Unit> {
+    @Test fun notRegisteredLoginStillSucceedsNoAutomaticSetup() = runBlocking<Unit> {
+        // Guide S. 30: die Anmeldung prüft die Registrierung nicht – das fällt erst bei StartTransaction auf (Schritt 6)
         val f = fixture(Scenario.JTL_TAKEOVER)
-        val e = expect<TseLoginException> { f.epson().ensureReady() }
-        assertTrue(e.message!!, e.message!!.contains("nicht registriert"))
+        f.epson().ensureReady()
+        assertEquals(listOf("GetStorageInfo", "RunTSESelfTest", "GetChallenge", "AuthenticateUserForTimeAdmin", "UpdateTime"), f.mock.calls)
         assertTrue(f.mock.calls.none { it in setOf("SetUpForPrinter", "RegisterClient", "AuthenticateUserForAdmin") })
+    }
+
+    @Test fun overnightLoginExpiredAndSelfTestDue() = runBlocking<Unit> {
+        // Guide S. 25: Anmeldung abgelaufen UND Self-Test fällig → Neuanmeldung verlangt Self-Test → danach Zeit
+        val f = fixture()
+        val epson = f.epson()
+        epson.ensureReady()
+        f.advance(26 * MockConfig.HOUR)
+        epson.syncTime()
+        assertEquals(
+            listOf("UpdateTime", "GetChallenge", "AuthenticateUserForTimeAdmin", "RunTSESelfTest", "GetChallenge",
+                "AuthenticateUserForTimeAdmin", "UpdateTime", "UpdateTime"),
+            f.mock.calls.drop(3),
+        )
+        assertTrue(epson.storageInfo().hasValidTime)
     }
 
     @Test fun boundToOtherHostNoSetUpForPrinter() = runBlocking<Unit> {
@@ -140,8 +156,11 @@ class EpsonTseLoginTest {
         val f = fixture()
         val epson = f.epson()
         epson.ensureReady()
-        f.server.injectFault(Fault.DROP_AFTER_EXECUTE, "UpdateTime")
+        // Verbindung bricht ab, bevor die TSE das Kommando bekommt: nach Wiedereinstieg keine Nachlieferung → unbekannt
+        f.server.injectFault(Fault.DROP_BEFORE_EXECUTE, "UpdateTime")
         expect<TseResultUnknownException> { epson.syncTime() }
+        assertEquals(0, f.count("UpdateTime")) // nicht automatisch wiederholt
+        epson.syncTime()
         assertEquals(1, f.count("UpdateTime"))
     }
 

@@ -27,12 +27,12 @@ class EpsonTseReadOnlyTest {
 
     @Test fun readOnlyClassification() {
         fun ro(fn: String, input: Map<String, Any?> = emptyMap()) = ReadOnlyGuardTransport.isReadOnly(EpsonJson.request(fn, input))
-        assertTrue(ro("GetStorageInfo"))
-        assertTrue(ro("GetLogMessageCertificate"))
-        assertTrue(ro("FinalizeExport", mapOf("deleteData" to false)))
-        assertFalse(ro("FinalizeExport", mapOf("deleteData" to true)))
-        assertFalse(ro("FinalizeExport", mapOf("deleteData" to "false"))) // nur echtes Boolean
-        assertFalse(ro("FinalizeExport"))
+        listOf("GetStorageInfo", "GetChallenge", "GetStartedTransactionList", "GetLastTransactionResponse", "GetLogMessageCertificate")
+            .forEach { assertTrue(it, ro(it)) }
+        // Admin-Rolle laut Spezifikation; ArchiveExport sperrt die TSE in den Exportmodus
+        listOf("GetRegisteredClientList", "GetTimeOutInterval", "ArchiveExport", "ExportFilteredByPeriodOfTime", "GetExportData", "CancelExport")
+            .forEach { assertFalse(it, ro(it)) }
+        assertFalse(ro("FinalizeExport", mapOf("deleteData" to false)))
         listOf("StartTransaction", "FinishTransaction", "UpdateTime", "UpdateTimeForFirst", "RegisterClient", "SetUp",
             "SetUpForPrinter", "RegisterSecretKey", "RunTSESelfTest", "AuthenticateUserForTimeAdmin",
             "AuthenticateUserForAdmin", "DeregisterClient", "DisableSecureElement", "LockTSE")
@@ -79,7 +79,7 @@ class EpsonTseReadOnlyTest {
         assertTrue(status.message.contains("Self-Test ok") && status.message.contains("Zeit gesetzt"))
         assertTrue(epson.name.contains("MOCK"))
         assertFalse(epson.certified)
-        assertEquals(listOf("JTL-POS-1", "KASSE-01"), epson.registeredClients())
+        assertEquals(emptyList<Long>(), epson.startedTransactions())
         assertTrue(f.mock.writeCalls.isEmpty())
     }
 
@@ -89,7 +89,8 @@ class EpsonTseReadOnlyTest {
         assertTrue(info.initialized)
         assertFalse(info.hasPassedSelfTest)
         assertTrue(epson.status().message.contains("Self-Test fällig"))
-        assertEquals(listOf("JTL-POS-1"), epson.registeredClients())
+        // Client-Liste verlangt Admin – der Schreibschutz lässt sie nicht durch
+        try { epson.registeredClients(); fail() } catch (_: TseWriteBlockedException) {}
 
         val status = fixture(Scenario.FRESH).epson().status()
         assertFalse(status.available)
@@ -113,8 +114,8 @@ class EpsonTseReadOnlyTest {
 
     @Test fun errorCodeBecomesEpsonException() = runBlocking<Unit> {
         val f = fixture()
-        f.mock.inject("TSE1_ERROR_NO_TSE", "GetRegisteredClientList")
-        try { f.epson().registeredClients(); fail() } catch (e: EpsonException) {
+        f.mock.inject("TSE1_ERROR_NO_TSE", "GetStartedTransactionList")
+        try { f.epson().startedTransactions(); fail() } catch (e: EpsonException) {
             assertEquals("TSE1_ERROR_NO_TSE", e.code)
         }
     }

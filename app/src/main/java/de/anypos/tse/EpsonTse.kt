@@ -54,6 +54,8 @@ class EpsonTse(
     private val commandTimeoutMs: Int = TseTransport.DEFAULT_TIMEOUT_MS,
     /** Verbindung per TLS? Ohne TLS ginge die TimeAdmin-PIN im Klartext über das Netz. */
     val encrypted: Boolean = true,
+    /** Gerät nach jeder Aktion freigeben (empfohlen, solange andere Anwendungen denselben Drucker nutzen). */
+    private val releaseAfterUse: Boolean = true,
 ) : Tse {
 
     @Volatile private var info: EpsonStorageInfo? = null
@@ -79,36 +81,38 @@ class EpsonTse(
         TseStatus(available = false, message = "TSE nicht erreichbar: ${e.message}")
     }
 
-    /** `GetStorageInfo` (Storage COMMON); merkt sich `vendorType` für alle weiteren Aufrufe. */
-    suspend fun storageInfo(): EpsonStorageInfo {
-        val out = call("GetStorageInfo", common = true)
-        val tse = out["tseInformation"] as? JsonObject
-            ?: throw TseResultUnknownException("GetStorageInfo", "GetStorageInfo ohne tseInformation")
-        return EpsonStorageInfo.from(tse).also { info = it }
+    /** `GetStorageInfo` (Storage COMMON); merkt sich `vendorType` für alle weiteren Aufrufe. Gibt das Gerät danach frei. */
+    suspend fun storageInfo(): EpsonStorageInfo = exclusive { readStorageInfo() }
+
+    /** Offene Transaktionen der Kasse (lesend, ohne Anmeldung). */
+    suspend fun startedTransactions(): List<Long> = exclusive {
+        (call("GetStartedTransactionList", mapOf("clientId" to clientId()))["startedTransactionNumberList"] as? JsonArray)
+            ?.mapNotNull { (it as? JsonPrimitive)?.longOrNull } ?: emptyList()
     }
 
-    suspend fun registeredClients(): List<String> =
+    /** Registrierte Clients. Verlangt eine Admin-Anmeldung (Spez. S. 18) – nur im Admin-Ablauf (Schritt 7). */
+    suspend fun registeredClients(): List<String> = exclusive {
         (call("GetRegisteredClientList")["registeredClientIdList"] as? JsonArray)
             ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull } ?: emptyList()
+    }
 
     /** Bringt die TSE in Betriebsbereitschaft: Self-Test, TimeAdmin-Anmeldung, Zeit – jeweils nur wenn nötig. */
-    suspend fun ensureReady() = session.withLock { ensureReadyLocked() }
+    suspend fun ensureReady() = session.withLock { exclusive { ensureReadyLocked() } }
 
     /**
      * Führt [block] aus; liefert die TSE einen Fehlercode, der Anmeldung, Zeit oder Self-Test betrifft, wird dieser
-     * Zustand einmal hergestellt und [block] einmal wiederholt. Alle anderen Fehler gehen unverändert durch.
+     * Zustand hergestellt und [block] **einmal** wiederholt. Ein Fehlercode heißt: sicher nicht ausgeführt – nach
+     * „Ergebnis unbekannt“ wird nie wiederholt. Alle anderen Fehler gehen unverändert durch.
      */
     suspend fun <T> withRecovery(block: suspend () -> T): T = session.withLock {
-        try {
-            block()
-        } catch (e: EpsonException) {
-            when (e.code) {
-                in RELOGIN -> { loggedIn = false; login() }
-                in SELF_TEST -> { selfTest(); loggedIn = false; login(); updateTime() }
-                NO_TIME_SET -> { if (!loggedIn) login(); updateTime() }
-                else -> throw e
+        exclusive {
+            try {
+                block()
+            } catch (e: EpsonException) {
+                if (e.code !in RECOVERABLE) throw e
+                restore(e.code)
+                block()
             }
-            block()
         }
     }
 
@@ -120,36 +124,77 @@ class EpsonTse(
     override suspend fun finishTransaction(clientId: String, txNumber: Long, processType: String, processData: String): TseFinish =
         throw TseException(NOT_YET)
 
-    /** Abmelden (falls angemeldet), Gerät schließen und Verbindung trennen. */
+    /** Abmelden (falls angemeldet), Gerät schließen und Sitzung beenden (`<disconnect>`). */
     suspend fun shutdown() {
         if (loggedIn) runCatching { call("LogOutForTimeAdmin", mapOf("clientId" to clientId())) }
         loggedIn = false
-        runCatching { transport.close() }
         runCatching { transport.disconnect() }
     }
 
     // --- Anmeldung, Zeit, Self-Test (Aufrufer hält [session])
 
+    /**
+     * Das Gerät gehört exklusiv der Verbindung, die es geöffnet hat (Handbuch S. 11, Guide S. 6). Nach jeder Aktion
+     * wird es wieder freigegeben, damit andere Anwendungen am selben Drucker (z. B. JTL-POS) nicht blockiert werden;
+     * die Anmeldung an der TSE bleibt dabei bestehen.
+     */
+    private suspend fun <T> exclusive(block: suspend () -> T): T = try {
+        block()
+    } finally {
+        if (releaseAfterUse) runCatching { transport.close() }
+    }
+
+    private suspend fun readStorageInfo(): EpsonStorageInfo {
+        // Laut Epson-Demo liefert GetStorageInfo auch in diesen Zuständen gültige Daten
+        val out = call("GetStorageInfo", common = true, alsoAccept = setOf(CURRENTLY_EXPORTING, ALREADY_SET_UP))
+        val tse = out["tseInformation"] as? JsonObject
+            ?: throw TseResultUnknownException("GetStorageInfo", "GetStorageInfo ohne tseInformation")
+        return EpsonStorageInfo.from(tse).also { info = it }
+    }
+
     private suspend fun ensureReadyLocked() {
-        val i = storageInfo()
+        val i = readStorageInfo()
         when (i.initializationState) {
             "INITIALIZED" -> Unit
             "UNINITIALIZED" -> throw TseLoginException("TSE ist nicht initialisiert – Einrichtung nur im Admin-Ablauf")
             else -> throw TseLoginException("TSE ist außer Betrieb (${i.initializationState})")
         }
-        var needTime = !i.hasValidTime
+        if (i.isTseUnlocked == false) throw TseLoginException("TSE ist gesperrt (LockTSE) – Entsperren im Admin-Ablauf")
         if (!i.hasPassedSelfTest) {
             selfTest()
-            loggedIn = false
-            needTime = true
+            login()
+            updateTime() // der Self-Test setzt die TSE-Uhr zurück (Guide S. 21, 29)
+            return
         }
         if (!loggedIn) login()
-        if (needTime) updateTime()
+        if (!i.hasValidTime) updateTime()
+    }
+
+    /** Stellt nach einem Fehlercode den nötigen Zustand her; auch verschachtelt (Anmeldung → Self-Test, Guide S. 25). */
+    private suspend fun restore(code: String) {
+        when (code) {
+            in SELF_TEST -> { selfTest(); login(); updateTime() }
+            NO_TIME_SET -> { if (!loggedIn) relogin(); updateTime() }
+            else -> relogin() // Anmeldung abgelaufen
+        }
+    }
+
+    /** Neu anmelden; verlangt die TSE dabei einen Self-Test, wird er ausgeführt und danach die Zeit gesetzt. */
+    private suspend fun relogin() {
+        try {
+            login()
+        } catch (e: EpsonException) {
+            if (e.code !in SELF_TEST) throw e
+            selfTest()
+            login()
+            updateTime()
+        }
     }
 
     private suspend fun selfTest() {
+        loggedIn = false
         try {
-            call("RunTSESelfTest")
+            call("RunTSESelfTest", timeoutMs = TseTransport.LONG_TIMEOUT_MS)
         } catch (e: EpsonException) {
             if (e.code == CLIENT_NOT_REGISTERED) {
                 throw TseLoginException("TSE war zuletzt an einem anderen Drucker/Host – Admin-Ablauf „TSE übernehmen“ nötig", e.code)
@@ -158,7 +203,12 @@ class EpsonTse(
         }
     }
 
+    /**
+     * TimeAdmin-Anmeldung (userId = Client-ID). Achtung: Die TSE prüft hier nicht, ob die Kasse registriert ist
+     * (Guide S. 30) – das zeigt sich erst bei StartTransaction.
+     */
     private suspend fun login() {
+        loggedIn = false
         val c = credentials() ?: throw TseLoginException("TimeAdmin-PIN ist nicht eingestellt")
         if (c.id == rejected) throw TseLoginException("Zugangsdaten wurden von der TSE abgelehnt – erst PIN/Secret prüfen und neu speichern")
         val user = clientId()
@@ -167,9 +217,12 @@ class EpsonTse(
         try {
             call("AuthenticateUserForTimeAdmin", mapOf("clientId" to user, "pin" to c.timeAdminPin, "hash" to hash(challenge, c.sharedSecret)))
         } catch (e: EpsonException) {
-            loggedIn = false
+            val left = e.output?.get("remainingRetries")?.let { (it as? JsonPrimitive)?.longOrNull }
             throw when (e.code) {
-                AUTH_FAILED -> { rejected = c.id; TseLoginException("TimeAdmin-PIN falsch – keine weiteren Versuche, damit die PIN nicht gesperrt wird", e.code) }
+                AUTH_FAILED -> {
+                    rejected = c.id
+                    TseLoginException("TimeAdmin-PIN falsch${left?.let { " (noch $it Versuche)" } ?: ""} – keine weiteren automatischen Versuche", e.code)
+                }
                 PIN_BLOCKED -> { rejected = c.id; TseLoginException("TimeAdmin-PIN ist gesperrt – Entsperren mit PUK im Admin-Ablauf nötig", e.code) }
                 HOST_AUTH_FAILED -> { rejected = c.id; TseLoginException("Shared Secret passt nicht (von JTL geändert?) – Secret prüfen", e.code) }
                 CLIENT_NOT_REGISTERED -> TseLoginException("Kasse „$user“ ist an der TSE nicht registriert – Admin-Ablauf „TSE übernehmen“ nötig", e.code)
@@ -185,10 +238,16 @@ class EpsonTse(
         call("UpdateTime", mapOf("userId" to clientId(), "newDateTime" to now, "useTimeSync" to false))
     }
 
-    private suspend fun call(function: String, input: Map<String, Any?> = emptyMap(), common: Boolean = false): JsonObject {
-        val vendor = if (common) "" else (info ?: storageInfo()).vendorType
-        val answer = transport.operate(EpsonJson.request(function, input, common, vendor), commandTimeoutMs)
-        return EpsonJson.output(function, answer)
+    private suspend fun call(
+        function: String,
+        input: Map<String, Any?> = emptyMap(),
+        common: Boolean = false,
+        timeoutMs: Int = commandTimeoutMs,
+        alsoAccept: Set<String> = emptySet(),
+    ): JsonObject {
+        val vendor = if (common) "" else (info ?: readStorageInfo()).vendorType
+        val answer = transport.operate(EpsonJson.request(function, input, common, vendor), timeoutMs)
+        return EpsonJson.output(function, answer, alsoAccept)
     }
 
     companion object {
@@ -200,6 +259,9 @@ class EpsonTse(
         private val RELOGIN = setOf("OTHER_ERROR_UNAUTHENTICATED_TIME_ADMIN_USER", "TSE1_ERROR_AUTHENTICATION_USER_NOT_LOGGED_IN")
         private val SELF_TEST = setOf("TSE1_ERROR_WRONG_STATE_NEEDS_SELF_TEST", "TSE1_ERROR_WRONG_STATE_NEEDS_SELF_TEST_PASSED")
         private const val NO_TIME_SET = "TSE1_ERROR_NO_TIME_SET"
+        private val RECOVERABLE = RELOGIN + SELF_TEST + NO_TIME_SET
+        private const val CURRENTLY_EXPORTING = "OTHER_ERROR_CURRENTLY_EXPORTING"
+        private const val ALREADY_SET_UP = "OTHER_ERROR_TSE_ALREADY_SET_UP"
         private const val CLIENT_NOT_REGISTERED = "TSE1_ERROR_CLIENT_NOT_REGISTERED"
         private const val AUTH_FAILED = "TSE1_ERROR_AUTHENTICATION_FAILED"
         private const val PIN_BLOCKED = "TSE1_ERROR_AUTHENTICATION_PIN_BLOCKED"
@@ -233,6 +295,10 @@ data class EpsonStorageInfo(
     val description: String?,
     val softwareVersion: String?,
     val lastExport: String?,
+    /** null = Feld fehlt (Spez.: `isTSEUnlocked`). */
+    val isTseUnlocked: Boolean? = null,
+    /** Sekunden bis zum nächsten Pflicht-Self-Test (Spez. S. 12). */
+    val timeUntilNextSelfTest: Long? = null,
 ) {
     val initialized get() = initializationState == "INITIALIZED"
     val isMock get() = EpsonTse.isMockSerial(serialHex)
@@ -268,6 +334,8 @@ data class EpsonStorageInfo(
         "tseDescription" to description.orEmpty(),
         "softwareVersion" to softwareVersion.orEmpty(),
         "lastExportExecutedDate" to lastExport.orEmpty(),
+        "isTSEUnlocked" to isTseUnlocked?.toString().orEmpty(),
+        "timeUntilNextSelfTest (s)" to timeUntilNextSelfTest?.toString().orEmpty(),
     )
 
     companion object {
@@ -292,6 +360,8 @@ data class EpsonStorageInfo(
                 description = tse.string("tseDescription"),
                 softwareVersion = tse.string("softwareVersion"),
                 lastExport = tse.string("lastExportExecutedDate"),
+                isTseUnlocked = (tse["isTSEUnlocked"] ?: tse["isTseUnlocked"])?.let { (it as? JsonPrimitive)?.booleanOrNull },
+                timeUntilNextSelfTest = long("timeUntilNextSelfTest"),
             )
         }
 

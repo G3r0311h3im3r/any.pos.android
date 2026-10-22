@@ -1,12 +1,14 @@
 package de.anypos
 
 import de.anypos.tse.EposXmlSocketTransport
+import de.anypos.tse.MemoryClientIdStore
 import de.anypos.tse.TseResultUnknownException
 import de.anypos.tse.TseTransportException
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -19,7 +21,10 @@ import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
-/** Protokolltests gegen einen skriptgesteuerten Fake-Drucker (kein echtes Gerät, keine TSE). */
+/**
+ * Protokolltests gegen einen skriptgesteuerten Fake-Drucker (kein echtes Gerät, keine TSE).
+ * Nachrichtenformate nach ePOS-Device XML User's Manual Rev. AC.
+ */
 class EposXmlSocketTransportTest {
 
     /** Eine Verbindung aus Sicht des Fake-Druckers. */
@@ -54,13 +59,20 @@ class EposXmlSocketTransportTest {
             require(msg.startsWith("<open_device>")) { msg }
             send("<open_device><device_id>local_TSE</device_id><code>OK</code><data_id>$dataId</data_id></open_device>")
         }
+
+        /** Erwartet <disconnect> und bestätigt; liefert die gemeldete client_id. */
+        fun acceptDisconnect(): String {
+            val msg = read()
+            require(msg.startsWith("<disconnect>")) { msg }
+            send("<disconnect><code>OK</code></disconnect>")
+            return Regex("<client_id>(.*?)</client_id>").find(msg)!!.groupValues[1]
+        }
     }
 
     /** Fake-Drucker: je eingehender Verbindung wird das nächste Skript ausgeführt. */
     class FakePrinter(vararg scripts: (Conn) -> Unit) {
         val server = ServerSocket(0)
         val port get() = server.localPort
-        val requests: MutableList<String> = Collections.synchronizedList(mutableListOf())
         val failures: MutableList<Throwable> = Collections.synchronizedList(mutableListOf())
         val done = CountDownLatch(scripts.size)
         private val thread = Thread {
@@ -77,16 +89,21 @@ class EposXmlSocketTransportTest {
         }.apply { isDaemon = true; start() }
 
         fun stop() = server.close()
+
+        fun assertScriptsOk() {
+            done.await(3, TimeUnit.SECONDS)
+            assertTrue(failures.toString(), failures.isEmpty())
+        }
     }
 
     /** Vom Fake-Drucker empfangene Nachrichten (für Zählungen und Inhalte). */
     private val seen: MutableList<String> = Collections.synchronizedList(mutableListOf())
     private var printer: FakePrinter? = null
-    private var time = 1_000_000L
+    private val store = MemoryClientIdStore()
 
-    private fun transport(p: FakePrinter, connectTimeout: Int = 2_000) = EposXmlSocketTransport(
-        host = "127.0.0.1", port = p.port, connectTimeoutMs = connectTimeout, handshakeTimeoutMs = 2_000,
-        clock = { System.currentTimeMillis() + (time - 1_000_000L) }, log = {},
+    private fun transport(p: FakePrinter, openAttempts: Int = 1) = EposXmlSocketTransport(
+        host = "127.0.0.1", port = p.port, connectTimeoutMs = 2_000, handshakeTimeoutMs = 2_000, openTimeoutMs = 2_000,
+        openAttempts = openAttempts, openRetryDelayMs = 20, redeliveryWaitMs = 500, clientIdStore = store, log = {},
     )
 
     private fun request(fn: String, extra: String = "") =
@@ -96,20 +113,27 @@ class EposXmlSocketTransportTest {
     private fun requestData(msg: String) = Regex("<requestdata>(.*)</requestdata>", RegexOption.DOT_MATCHES_ALL)
         .find(msg)!!.groupValues[1].replace("&quot;", "\"").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
 
-    private fun result(json: String) =
-        "<device_data><device_id>local_TSE</device_id><data><type>onoperateresult</type>" +
-            "<success>true</success><code>SUCCESS</code><resultdata>${EposXmlSocketTransport.escape(json)}</resultdata></data></device_data>"
+    private fun result(json: String, type: String = "operateresult") =
+        "<device_data><sequence>0</sequence><device_id>local_TSE</device_id><data><type>$type</type>" +
+            "<success>true</success><code>SUCCESS</code><resultdata>${EposXmlSocketTransport.escape(json)}</resultdata></data>" +
+            "<data_id>9</data_id></device_data>"
+
+    private fun ok(fn: String) = """{"result":"EXECUTION_OK","function":"$fn","output":{}}"""
 
     @After fun tearDown() { printer?.stop() }
 
-    @Test fun handshakeStoresClientId() = runBlocking {
-        val p = FakePrinter({ c -> c.hello("sock123"); Thread.sleep(200) }).also { printer = it }
+    @Test fun handshakeStoresClientIdAndDisconnectEndsSession() = runBlocking<Unit> {
+        val p = FakePrinter({ c -> c.hello("sock123"); seen += c.acceptDisconnect() }).also { printer = it }
         val t = transport(p)
         t.connect()
         assertTrue(t.isConnected)
         assertEquals("sock123", t.clientId)
+        assertEquals("sock123", store.load())
         t.disconnect()
         assertFalse(t.isConnected)
+        assertEquals(listOf("sock123"), seen)          // eigene Sitzung per <disconnect> beendet
+        assertNull(store.load())
+        p.assertScriptsOk()
     }
 
     @Test fun missingHandshakeFailsCleanly() = runBlocking {
@@ -119,21 +143,37 @@ class EposXmlSocketTransportTest {
         }
     }
 
-    @Test fun openOkAndDeviceInUse() = runBlocking {
-        val ok = FakePrinter({ c -> c.hello("s1"); c.acceptOpen("7"); Thread.sleep(200) }).also { printer = it }
-        val t = transport(ok)
-        t.open()
-        assertEquals("7", t.lastDataId)
-        ok.stop()
-
-        val busy = FakePrinter({ c ->
-            c.hello("s2"); c.read()
-            c.send("<open_device><device_id>local_TSE</device_id><code>DEVICE_IN_USE</code></open_device>")
+    @Test fun restartWithStoredClientIdDisconnectsOldSession() = runBlocking<Unit> {
+        store.save("old7") // z. B. nach App-Absturz
+        val p = FakePrinter({ c ->
+            c.hello("s1")
+            seen += c.acceptDisconnect()
+            c.acceptOpen()
+            c.read()
+            c.send(result(ok("GetStorageInfo")))
             Thread.sleep(200)
         }).also { printer = it }
-        try { transport(busy).open(); fail() } catch (e: TseTransportException) {
+        transport(p).operate(request("GetStorageInfo"))
+        assertEquals(listOf("old7"), seen)
+        assertEquals("s1", store.load())
+        p.assertScriptsOk()
+    }
+
+    @Test fun openDeviceInUseRetriesThenFails() = runBlocking<Unit> {
+        val busy = "<open_device><device_id>local_TSE</device_id><code>DEVICE_IN_USE</code></open_device>"
+        val retry = FakePrinter({ c ->
+            c.hello("s1"); c.read(); c.send(busy); c.read(); c.send(busy); c.acceptOpen("7"); Thread.sleep(200)
+        }).also { printer = it }
+        val t = transport(retry, openAttempts = 3)
+        t.open()
+        assertEquals("7", t.lastDataId)
+        retry.stop()
+        store.save(null) // eigenständiger zweiter Fall ohne alte Sitzung
+
+        val always = FakePrinter({ c -> c.hello("s2"); repeat(2) { c.read(); c.send(busy) }; Thread.sleep(200) }).also { printer = it }
+        try { transport(always, openAttempts = 2).open(); fail() } catch (e: TseTransportException) {
             assertTrue(e !is TseResultUnknownException)
-            assertTrue(e.message!!.contains("DEVICE_IN_USE"))
+            assertTrue(e.message!!, e.message!!.contains("DEVICE_IN_USE"))
         }
     }
 
@@ -149,49 +189,60 @@ class EposXmlSocketTransportTest {
         }).also { printer = it }
         val answer = transport(p).operate(payload)
         assertEquals(payload, answer)
-        // Auf der Leitung ist das JSON XML-sicher codiert
-        assertTrue(seen.single().contains("&amp;") && seen.single().contains("&lt;Kasse&gt;") && seen.single().contains("&quot;"))
-        assertFalse(seen.single().contains("<sequence>"))
+        val wire = seen.single()
+        assertTrue(wire.contains("&amp;") && wire.contains("&lt;Kasse&gt;") && wire.contains("&quot;"))
+        assertFalse(wire.contains("<sequence>"))
+        assertTrue(wire.contains("<timeout>60000</timeout>")) // Standard wie Epson-Demo
     }
 
-    @Test fun fragmentedAnswerAfterForeignMessages() = runBlocking {
+    @Test fun bothResultTypesAndForeignAnswersSkipped() = runBlocking<Unit> {
         val p = FakePrinter({ c ->
             c.hello("s1"); c.acceptOpen()
-            val msg = c.read()
+            c.read()
             // Ereignis und Antwort auf eine andere Funktion vor der eigentlichen Antwort
             c.send("<device_data><device_id>local_TSE</device_id><data><type>onstatus</type></data><data_id>9</data_id></device_data>")
             c.send(result("""{"result":"FALSCH","function":"StartTransaction"}"""))
-            c.sendFragmented(result("""{"result":"EXECUTION_OK","function":"GetStorageInfo","output":{}}"""))
+            c.sendFragmented(result(ok("GetStorageInfo"), type = "onoperateresult"))
+            c.read()
+            c.send(result(ok("GetStorageInfo"), type = "operateresult"))
             Thread.sleep(200)
         }).also { printer = it }
         val t = transport(p)
-        val answer = t.operate(request("GetStorageInfo"))
-        assertTrue(answer.contains("EXECUTION_OK"))
-        assertEquals("9", t.lastDataId)
+        assertTrue(t.operate(request("GetStorageInfo")).contains("EXECUTION_OK"))
+        assertTrue(t.operate(request("GetStorageInfo")).contains("EXECUTION_OK"))
+        p.assertScriptsOk()
     }
 
-    @Test fun timeoutAfterSendIsUnknownAndNotRepeated() = runBlocking {
+    @Test fun errorMessageMeansNotExecuted() = runBlocking<Unit> {
+        val p = FakePrinter({ c ->
+            c.hello("s1"); c.acceptOpen(); c.read()
+            c.send("<error><device_id>local_TSE</device_id><code>DEVICE_NOT_OPEN</code><data></data><data_id>3</data_id></error>")
+            Thread.sleep(500)
+        }).also { printer = it }
+        val started = System.currentTimeMillis()
+        try { transport(p).operate(request("StartTransaction")); fail() } catch (e: TseTransportException) {
+            assertTrue(e !is TseResultUnknownException)
+            assertTrue(e.message!!, e.message!!.contains("nicht ausgeführt"))
+        }
+        assertTrue(System.currentTimeMillis() - started < 2_000) // sofort, nicht erst nach Timeout
+    }
+
+    @Test fun deviceErrorCodesClassified() = runBlocking<Unit> {
         val p = FakePrinter({ c ->
             c.hello("s1"); c.acceptOpen()
-            seen += c.read()
-            Thread.sleep(3_000) // keine Antwort
+            c.read()
+            c.send("<device_data><device_id>local_TSE</device_id><data><type>operateresult</type><success>false</success>" +
+                "<code>ERROR_DEVICE_BUSY</code></data><data_id>4</data_id></device_data>")
+            c.read()
+            c.send("<error><device_id>local_TSE</device_id><code>SYSTEM_ERROR</code><data></data><data_id>5</data_id></error>")
+            Thread.sleep(200)
         }).also { printer = it }
-        try { transport(p).operate(request("FinishTransaction"), timeoutMs = 100).let { fail() } } catch (e: TseResultUnknownException) {
-            assertEquals("FinishTransaction", e.function)
-        }
-        assertEquals(1, seen.size)
-    }
-
-    @Test fun connectionLossAfterSendIsUnknown() = runBlocking {
-        val p = FakePrinter({ c -> c.hello("s1"); c.acceptOpen(); c.read(); c.close() }).also { printer = it }
         val t = transport(p)
-        try { t.operate(request("StartTransaction")); fail() } catch (e: TseResultUnknownException) {
-            assertEquals("StartTransaction", e.function)
-        }
-        assertFalse(t.isConnected)
+        try { t.operate(request("UpdateTime")); fail() } catch (e: TseTransportException) { assertTrue(e !is TseResultUnknownException) }
+        try { t.operate(request("UpdateTime")); fail() } catch (e: TseResultUnknownException) { assertEquals("UpdateTime", e.function) }
     }
 
-    @Test fun reconnectWithinWindowResumesSessionWithoutResending() = runBlocking {
+    @Test fun lostConnectionAnswerRedeliveredAfterReconnect() = runBlocking<Unit> {
         val p = FakePrinter(
             { c -> c.hello("s1"); c.acceptOpen("5"); seen += c.read(); c.close() },   // Kommando A: Abbruch
             { c ->
@@ -199,72 +250,89 @@ class EposXmlSocketTransportTest {
                 val reconnect = c.read()
                 seen += reconnect
                 c.send("<reconnect><code>OK</code></reconnect>")
-                val msg = c.read()                                                     // direkt Kommando B, kein open_device
-                seen += msg
-                c.send(result("""{"result":"EXECUTION_OK","function":"B"}"""))
+                c.send(result(ok("StartTransaction")))                             // Nachlieferung (Handbuch S. 36)
                 Thread.sleep(200)
             },
         ).also { printer = it }
-        val t = transport(p)
-        try { t.operate(request("A")); fail() } catch (_: TseResultUnknownException) {}
-
-        assertTrue(t.operate(request("B")).contains("\"B\""))
+        val answer = transport(p).operate(request("StartTransaction"))
+        assertTrue(answer.contains("EXECUTION_OK"))
         val reconnect = seen[1]
         assertTrue(reconnect, reconnect.contains("<old_client_id>s1</old_client_id>"))
         assertTrue(reconnect, reconnect.contains("<new_client_id>s2</new_client_id>"))
         assertTrue(reconnect, reconnect.contains("<received_id>5</received_id>"))
-        // A wurde genau einmal gesendet, danach nur B
-        assertEquals(1, seen.count { it.startsWith("<device_data>") && requestData(it).contains("\"function\":\"A\"") })
-        assertTrue(requestData(seen[2]).contains("\"function\":\"B\""))
+        assertEquals(1, seen.count { it.startsWith("<device_data>") }) // nie erneut gesendet
+        p.assertScriptsOk()
     }
 
-    @Test fun staleAnswerAfterReconnectIsDiscarded() = runBlocking<Unit> {
+    @Test fun noRedeliveryIsUnknownAndSessionIsDropped() = runBlocking<Unit> {
         val p = FakePrinter(
-            { c -> c.hello("s1"); c.acceptOpen("5"); c.read(); c.close() },                // A: Abbruch
+            { c -> c.hello("s1"); c.acceptOpen("5"); c.read(); c.close() },
+            { c -> c.hello("s2"); c.read(); c.send("<reconnect><code>OK</code></reconnect>"); runCatching { c.read() } }, // keine Nachlieferung
             { c ->
-                c.hello("s2")
+                c.hello("s3")
+                seen += c.acceptDisconnect()                                         // alte Sitzung beendet
+                c.acceptOpen()
                 c.read()
-                c.send("<reconnect><code>OK</code></reconnect>")
-                // Drucker liefert die Antwort auf das abgebrochene A nach – gleiche Funktion wie das nächste Kommando
-                c.send(result("""{"result":"EXECUTION_OK","function":"StartTransaction","output":{"transactionNumber":1}}"""))
-                val msg = c.read()
-                seen += msg
-                c.send(result("""{"result":"EXECUTION_OK","function":"StartTransaction","output":{"transactionNumber":2}}"""))
-                Thread.sleep(200)
-            },
-        ).also { printer = it }
-        val t = EposXmlSocketTransport(
-            host = "127.0.0.1", port = p.port, connectTimeoutMs = 2_000, handshakeTimeoutMs = 2_000, reconnectDrainMs = 300, log = {},
-        )
-        try { t.operate(request("StartTransaction")); fail() } catch (_: TseResultUnknownException) {}
-        val answer = t.operate(request("StartTransaction"))
-        assertTrue(answer, answer.contains("\"transactionNumber\":2"))
-        assertEquals(1, seen.size)
-    }
-
-    @Test fun afterWindowExpiredFreshConnectAndOpen() = runBlocking {
-        val p = FakePrinter(
-            { c -> c.hello("s1"); c.acceptOpen(); c.read(); c.close() },
-            { c ->
-                c.hello("s2")
-                val first = c.read()
-                seen += first
-                c.send("<open_device><device_id>local_TSE</device_id><code>OK</code><data_id>1</data_id></open_device>")
-                val msg = c.read()
-                c.send(result("""{"result":"EXECUTION_OK"}"""))
+                c.send(result(ok("GetStartedTransactionList")))
                 Thread.sleep(200)
             },
         ).also { printer = it }
         val t = transport(p)
-        try { t.operate(request("A")); fail() } catch (_: TseResultUnknownException) {}
-        time += 61_000 // Sperrfenster von 60 s abgelaufen
-        t.operate(request("B"))
-        assertTrue(seen.single().startsWith("<open_device>")) // kein <reconnect>
-        p.done.await(2, TimeUnit.SECONDS)
-        assertTrue(p.failures.toString(), p.failures.isEmpty())
+        try { t.operate(request("StartTransaction")); fail() } catch (e: TseResultUnknownException) {
+            assertEquals("StartTransaction", e.function)
+        }
+        assertTrue(t.operate(request("GetStartedTransactionList")).contains("EXECUTION_OK"))
+        assertEquals(listOf("s2"), seen)
+        p.assertScriptsOk()
     }
 
-    @Test fun unreachableHostIsNotExecuted() = runBlocking {
+    @Test fun reconnectRejectedEndsOldSessionAndIsUnknown() = runBlocking<Unit> {
+        val p = FakePrinter(
+            { c -> c.hello("s1"); c.acceptOpen("5"); c.read(); c.close() },
+            { c ->
+                c.hello("s2")
+                c.read()
+                c.send("<reconnect><code>CLIENT_NOT_FOUND</code></reconnect>")
+                seen += c.acceptDisconnect()
+                Thread.sleep(200)
+            },
+        ).also { printer = it }
+        try { transport(p).operate(request("FinishTransaction")); fail() } catch (_: TseResultUnknownException) {}
+        assertEquals(listOf("s1"), seen)
+        p.assertScriptsOk()
+    }
+
+    @Test fun timeoutIsUnknownNotRepeatedAndOldSessionEnded() = runBlocking<Unit> {
+        val p = FakePrinter(
+            { c -> c.hello("s1"); c.acceptOpen(); seen += c.read(); runCatching { c.read() } },   // keine Antwort, bis der Client aufgibt
+            { c -> c.hello("s2"); seen += c.acceptDisconnect(); c.acceptOpen(); c.read(); c.send(result(ok("GetStorageInfo"))); Thread.sleep(200) },
+        ).also { printer = it }
+        val t = transport(p)
+        try { t.operate(request("FinishTransaction"), timeoutMs = 100); fail() } catch (e: TseResultUnknownException) {
+            assertEquals("FinishTransaction", e.function)
+        }
+        // Kein <reconnect> (eine späte Antwort darf keinem neuen Kommando zugeordnet werden), sondern <disconnect>
+        assertTrue(t.operate(request("GetStorageInfo")).contains("EXECUTION_OK"))
+        assertEquals(2, seen.size)
+        assertEquals("s1", seen[1])
+    }
+
+    @Test fun timeoutAndSizeLimits() = runBlocking<Unit> {
+        // Zu große Anfrage: vor jedem Netzwerkzugriff abgelehnt, sicher nicht gesendet
+        val unreachable = EposXmlSocketTransport("127.0.0.1", 1, connectTimeoutMs = 200, log = {})
+        try { unreachable.operate(request("StartTransaction", """"processData":"${"A".repeat(70_000)}"""")); fail() }
+        catch (e: TseTransportException) { assertTrue(e.message!!, e.message!!.contains("zu groß")) }
+
+        val p = FakePrinter({ c ->
+            c.hello("s1"); c.acceptOpen()
+            seen += c.read(); c.send(result(ok("RunTSESelfTest")))
+            Thread.sleep(200)
+        }).also { printer = it }
+        transport(p).operate(request("RunTSESelfTest"), timeoutMs = 500_000)
+        assertTrue(seen.single().contains("<timeout>120000</timeout>")) // Handbuch: 100–120000 ms
+    }
+
+    @Test fun unreachableHostIsNotExecuted() = runBlocking<Unit> {
         val p = FakePrinter().also { printer = it }
         val port = p.port
         p.stop()

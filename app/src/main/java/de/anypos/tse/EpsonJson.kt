@@ -13,7 +13,15 @@ import kotlinx.serialization.json.putJsonObject
  * Epson-TSE-Fehlercode als Antwort: Die TSE hat den Aufruf abgelehnt, er wurde also **sicher nicht** ausgeführt
  * (Gegensatz zu [TseResultUnknownException]).
  */
-class EpsonException(val code: String, val function: String) : TseException("$function: $code")
+class EpsonException(
+    val code: String,
+    val function: String,
+    /** Zusatzangaben der TSE (`error.fact`, `error.errorinfo`), nur fürs Protokoll. */
+    val fact: String? = null,
+    val errorInfo: String? = null,
+    /** `output` der Fehlerantwort, z. B. `remainingRetries` bei falscher PIN. */
+    val output: JsonObject? = null,
+) : TseException("$function: $code")
 
 /** Aufbau der JSON-Kommandos und Auswertung der Antworten (Epson TSE JSON-Schnittstelle). */
 object EpsonJson {
@@ -50,10 +58,13 @@ object EpsonJson {
      * Liefert `output` einer erfolgreichen Antwort; ein Fehlercode wird zur [EpsonException].
      * Eine unlesbare Antwort kam nach dem Senden – das Ergebnis ist dann unbekannt.
      */
-    fun output(function: String, answer: String): JsonObject {
+    fun output(function: String, answer: String, alsoAccept: Set<String> = emptySet()): JsonObject {
         val json = parseObject(answer) ?: throw TseResultUnknownException(function, "Unlesbare Antwort auf $function – Ausführung unbekannt")
         val result = json.string("result") ?: throw TseResultUnknownException(function, "Antwort auf $function ohne result – Ausführung unbekannt")
-        if (result != EXECUTION_OK) throw EpsonException(result, function)
+        if (result != EXECUTION_OK && result !in alsoAccept) {
+            val error = json["error"] as? JsonObject
+            throw EpsonException(result, function, error?.string("fact"), error?.string("errorinfo"), json["output"] as? JsonObject)
+        }
         return json["output"] as? JsonObject ?: JsonObject(emptyMap())
     }
 

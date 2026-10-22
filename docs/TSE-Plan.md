@@ -18,11 +18,16 @@ TSE-Daten und QR-Code (V0) auf dem Beleg, Protokollierung von TSE-Fehlern.
 
 | Schritt | Inhalt | Schreibt auf die TSE? |
 |---|---|---|
-| 2a | Drucker/TSE identifizieren: Modell, Firmware, TSE-Seriennummer, Zertifikatsablauf, Speicherbelegung, registrierte Clients | **Nein** (nur lesend) |
+| 2a | Drucker/TSE identifizieren: Modell, Firmware, TSE-Seriennummer, Zertifikatsablauf, Speicherbelegung (`GetStorageInfo`) | **Nein** (nur lesend) |
 | 2b | Freigabe durch Betreiber: welche TSE, welche Client-ID, Test oder Produktiv | – |
-| 2c | Client-ID `KASSE-01` registrieren, Zeit setzen | **Ja** – nur nach Freigabe |
+| 2c | Registrierte Clients lesen (braucht Admin-Anmeldung), Client-ID `KASSE-01` registrieren, Zeit setzen | **Ja** – nur nach Freigabe |
 | 2d | Testtransaktionen | **Ja** – nur auf Test-TSE oder nach ausdrücklicher Freigabe |
-| 2e | TAR-Export, Fehlerfälle (Ziehen, Speicher voll, Zeitverlust), Abnahme | Export nur lesend |
+| 2e | TAR-Export, Fehlerfälle (Ziehen, Speicher voll, Zeitverlust), Abnahme | Admin-Anmeldung; **sperrt die TSE während des Exports** (Spez. S. 45) – nie parallel zum Produktivbetrieb |
+
+Hinweis (22.10.2026, nach den offiziellen Epson-Unterlagen): Die Liste der registrierten Clients und alle
+Export-Funktionen sind keine reinen Lesezugriffe, sondern verlangen eine Admin-Anmeldung. Der erste Kontakt
+mit der Produktiv-TSE (2a) beschränkt sich deshalb auf `GetStorageInfo`; das Gerät wird danach sofort wieder
+freigegeben, damit JTL-POS nicht blockiert wird.
 
 Aufwand Software (geschätzt): 2a ca. 0,5 Tag, 2c–2e ca. 2–4 Tage, sobald Drucker, TSE, Epson ePOS SDK und
 Dokumentation vorliegen. Der größte Zeitanteil ist der Test an der echten Hardware.

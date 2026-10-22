@@ -20,13 +20,25 @@ dann umgesetzt.**
 - Nach Connect schickt der Host: `<connect><data><client_id>sock…</client_id><protocol_version>2</protocol_version></data></connect>\0`
 - Öffnen: `<open_device><device_id>local_TSE</device_id><data><type>type_storage</type></data></open_device>\0`
   → Antwort `<open_device><device_id>local_TSE</device_id><code>OK</code><data_id>1</data_id></open_device>\0`
-- Kommando: `<device_data><device_id>local_TSE</device_id><data><type>operate</type><timeout>10000</timeout><requestdata>JSON</requestdata></data></device_data>\0`
-  → Antwort `<data><type>onoperateresult</type><resultdata>JSON</resultdata></data>\0`
-  Ohne `<sequence>` (wie in der praxiserprobten fiskaltrust-Anbindung); JSON XML-maskiert inkl. `"` → `&quot;`.
-  Zuordnung der Antwort über `function`; nach `<reconnect>` werden nachgelieferte Antworten verworfen.
-- Schließen: `<close_device><device_id>local_TSE</device_id></close_device>\0`
-- Reconnect nach Socket-Abbruch: TSE ist 1 Minute für andere gesperrt; der alte Client darf sofort
-  per `<reconnect>` mit `old_client_id`, `new_client_id`, `received_id` (letzte `data_id`) wieder rein.
+- Kommando: `<device_data><device_id>local_TSE</device_id><data><type>operate</type><timeout>60000</timeout><requestdata>JSON</requestdata></data></device_data>\0`
+  → Antwort `<device_data>…<data><type>operateresult</type><success>true</success><code>SUCCESS</code><resultdata>JSON</resultdata></data><data_id>n</data_id></device_data>\0`
+  (Handbuch: `operateresult`, Developer's Guide: `onoperateresult` – beides wird akzeptiert).
+  Ohne `<sequence>` (Epson-Demo; in der Antwort ist sie fest „0“). JSON XML-maskiert inkl. `"` → `&quot;`.
+  `timeout` 100–120000 ms (Standard 60 s; Self-Test/SetUp 120 s, Spez. S. 10–12), `requestdata` max. 64 KB.
+  Zuordnung der Antwort über `function`.
+- Fehler zu `device_data` kommen als eigene Nachricht `<error>…<code>…</code>…</error>` (Handbuch S. 82):
+  `DEVICE_NOT_OPEN`, `DEVICE_NOT_FOUND`, `PARAM_ERROR`, `COMMAND_ILLEGAL`, `FUNCTION_NOT_FOUND` = nicht ausgeführt;
+  `SEND_ERROR`, `DRIVER_ERROR`, `SYSTEM_ERROR` = unbekannt. Im Ergebnis selbst: `ERROR_PARMETER`, `ERROR_DEVICE_BUSY`
+  = nicht ausgeführt, sonst unbekannt.
+- Schließen: `<close_device><device_id>local_TSE</device_id></close_device>\0` – das Gerät ist exklusiv; die App
+  gibt es **nach jeder Aktion frei** (Guide S. 6), die Anmeldung an der TSE bleibt dabei bestehen.
+- Beenden: `<disconnect><data><client_id>…</client_id></data></disconnect>\0` (Handbuch S. 36, 68). Die
+  `client_id` wird dauerhaft gespeichert; nach Neustart/Absturz beendet die App damit die alte Sitzung.
+- Abbruch: TSE ist 1 Minute für andere gesperrt. Bricht die Verbindung **nach dem Senden** ab, steigt die App sofort
+  per `<reconnect>` (`old_client_id`, `new_client_id`, `received_id` = letzte `data_id`) wieder ein; der Drucker liefert
+  die zurückgehaltene Antwort nach (Handbuch S. 36). Kommt keine, ist das Ergebnis unbekannt, und die Sitzung wird per
+  `<disconnect>` verworfen (eine späte Antwort darf keinem anderen Kommando zugeordnet werden). Bei Zeitüberschreitung
+  kein `<reconnect>`, sondern `<disconnect>`. `open_device` mit `DEVICE_IN_USE` wird bis zu 25 × 1 s wiederholt.
 - JSON-Request:
   ```json
   {"storage":{"type":"TSE","vendor":"TSE1"},"function":"…","input":{…},"compress":{"required":false,"type":""}}
@@ -38,7 +50,13 @@ dann umgesetzt.**
 - Login (Challenge-Response): `GetChallenge{userId}` → `hash = base64(sha256(challenge + sharedSecret))`,
   Shared Secret ab Werk `EPSONKEY`, kann per `RegisterSecretKey` je **Host** (Drucker) geändert sein.
   Dann `AuthenticateUserForTimeAdmin{clientId,pin,hash}` bzw. `AuthenticateUserForAdmin{userId:"Administrator",pin,hash}`.
-- Zeit: TSE arbeitet in UTC. Nach Power-Cycle und nach Self-Test muss `UpdateTimeForFirst{userId,newDateTime,useTimeSync:"false"}` gesetzt werden.
+  Die TSE prüft bei `AuthenticateUserForTimeAdmin` **nicht**, ob der Client registriert ist (Guide S. 30) – das
+  zeigt sich erst bei `StartTransaction`. Bei falscher PIN kommt `remainingRetries` in `output`.
+- Zeit: TSE arbeitet in UTC. Nach Power-Cycle und nach **jedem** Self-Test (setzt die Uhr zurück, Guide S. 21/29)
+  muss die Zeit gesetzt werden: `UpdateTime{userId,newDateTime,useTimeSync:false}`. (`UpdateTimeForFirst` empfiehlt
+  der Guide nur bei mehreren Kassen an einer TSE; nach dem Umzug nutzt nur Any.POS die TSE.)
+- „Kasse über Nacht an“ (Guide S. 25): Anmeldung abgelaufen → Neuanmeldung meldet „Self-Test nötig“ →
+  `RunTSESelfTest` → anmelden → Zeit setzen → Befehl einmal wiederholen.
 - Transaktion: `StartTransaction{clientId,processData(b64),processType,additionalData}` →
   `{logTime,transactionNumber,serialNumber,signatureCounter,signature}`;
   `FinishTransaction{clientId,transactionNumber,processData,processType}` → `{logTime,signatureCounter,signature}`.
@@ -46,8 +64,13 @@ dann umgesetzt.**
   `serialNumber` kommt Base64-codiert und wird als Hex ausgegeben.
   Max. 512 offene Transaktionen; `GetStartedTransactionList` liefert die offenen.
 - Timeouts (Default): Admin 15 min, TimeAdmin 8 h Inaktivität, Export 100 s. Self-Test-Status verfällt nach 25 h.
-- Export: `ArchiveExport{}` → `GetExportData{}` (max. 64 KB je Aufruf, `exportStatus` `EXPORT_INCOMPLETE`/`EXPORT_COMPLETE`, Daten base64) → `FinalizeExport{deleteData:false}`; Abbruch mit `CancelExport{}`.
-- Zertifikat: `GetLogMessageCertificate{}` → `logMessageCertificate` (Base64, DER).
+- Export: **Rolle Admin** und vorher gesetzte Zeit (Spez. S. 45; sonst `OTHER_ERROR_NO_TIME_SET_BEFORE_EXPORT`).
+  `ArchiveExport{}` → `GetExportData{}` (bis 128 KB je Aufruf, `exportStatus` `EXPORT_INCOMPLETE_SEARCHING` mit leeren
+  Daten / `EXPORT_INCOMPLETE` / `EXPORT_COMPLETE`, Daten base64) → `FinalizeExport{deleteData:false}`; Abbruch mit
+  `CancelExport{}`. **Während des Exports nimmt die TSE nichts anderes an** – auch nicht von JTL-POS;
+  `GetStorageInfo` liefert dann `OTHER_ERROR_CURRENTLY_EXPORTING` samt Daten.
+- `GetRegisteredClientList` und `GetTimeOutInterval`: ebenfalls **Rolle Admin** (Spez. S. 18, 22).
+- Zertifikat: `GetLogMessageCertificate{}` → `logMessageCertificate` (Base64 einer PEM-Datei mit Zertifikatskette).
 - Signaturzeit ~200–500 ms → Transaktionen in Hintergrund-Coroutine, Bondruck erst nach Finish.
 
 Wichtige Fehlercodes und Reaktion (Epson-Best-Practice: nicht vorab pollen, Operation versuchen, auf Code reagieren):
@@ -85,9 +108,9 @@ Tse (Interface, vorhanden)
 1. **`readOnly`-Guard als Hülle um den Transport** (`ReadOnlyGuardTransport`, Schritt 3; Entscheidung vom
    22.10.2026: direkt vor der Leitung, unabhängig von `EpsonTse`; `EposXmlSocketTransport` bleibt reiner Socket-Code).
    Standard ist `TSE_WRITE_ENABLED = false`. Dann dürfen nur
-   `GetStorageInfo`, `GetChallenge`, `GetTimeOutInterval`, `GetStartedTransactionList`,
-   `GetRegisteredClientList`, `GetLastTransactionResponse`, `GetLogMessageCertificate` und die Export-Lesefunktionen (`ArchiveExport`,
-   `GetExportData`, `FinalizeExport` nur mit `deleteData:false`, `CancelExport`) passieren. Jede andere Funktion
+   `GetStorageInfo`, `GetChallenge`, `GetStartedTransactionList`, `GetLastTransactionResponse` und
+   `GetLogMessageCertificate` passieren (korrigiert 22.10.2026 nach JSON-Spezifikation: Client-Liste, Timeout-Abfrage
+   und alle Export-Funktionen verlangen eine Admin-Anmeldung; `ArchiveExport` sperrt die TSE). Jede andere Funktion
    wirft `TseException("Schreibender TSE-Aufruf gesperrt: <function>")`, **bevor** etwas gesendet wird.
    Freischaltung nur durch Admin in den Einstellungen mit Warnhinweis; wird protokolliert (`AuditLog`).
 2. **Mock-Server `tse-mock`** für alles, was Logik und Fehlerpfade betrifft.
@@ -141,9 +164,9 @@ Dialog „TSE übernehmen“ abgefragt.
 | 4 | Test-Grundlage `MockTseFixture` + Robustheit des Lesepfads (Abbruch + Reconnect, Gerätesperre, Fehlercodes, keine Antwort, `vendor`, Szenarien). Szenariotests wandern in den Schritt, der den Code liefert (Entscheidung 22.10.2026) | `app/src/test/…/MockTseFixture.kt`, `EpsonTseRobustnessTest.kt` | – |
 | 5 | Login-/Zeit-Flow mit automatischem Re-Login nach Fehlercode; **mit Tests:** TimeAdmin-Timeout, Self-Test, Client nicht registriert, Secret falsch | `tse/EpsonTse.kt` | TimeAdmin-Login (hinter Guard) |
 | 6 | `startTransaction`/`finishTransaction`, Hintergrund-Coroutine, Wiederanlauf über `GetStartedTransactionList`; **mit Tests:** Normalablauf, 512 offene Tx, Abbruch vor/nach Ausführung | `tse/EpsonTse.kt`, ggf. `domain/PosService.kt` | ja |
-| 7 | Admin-Dialog „TSE übernehmen“: Admin-Login, optional `RegisterSecretKey`, `RegisterClient(REGISTER_ID)`, `LogOutForAdmin`; PIN nur im Dialog | `ui/SettingsScreen.kt`, `tse/EpsonTse.kt` | ja |
-| 8 | TAR-Export (`ArchiveExport` → `GetExportData` → `FinalizeExport{deleteData:false}`) in den DSFinV-K-Export | `tse/EpsonTse.kt`, `export/ExportService.kt` | nein |
-| 9 | **Phase 2a an der echten Hardware:** nur Schritt 3 mit `readOnly`; Ergebnis von `GetStorageInfo`, `GetRegisteredClientList`, Login-Test mit `EPSONKEY` (nur um zu sehen, ob das Secret geändert wurde) → in `TSE-Plan.md` dokumentieren | – | nein |
+| 7 | Admin-Dialog „TSE übernehmen“: Admin-Login, `GetRegisteredClientList` (nur mit Admin), optional `RegisterSecretKey`, `RegisterClient(REGISTER_ID)`, `LogOutForAdmin`; PIN nur im Dialog | `ui/SettingsScreen.kt`, `tse/EpsonTse.kt` | ja |
+| 8 | TAR-Export (Admin-Login → `UpdateTime` → `ArchiveExport` → `GetExportData` → `FinalizeExport{deleteData:false}`) in den DSFinV-K-Export. **Sperrt die TSE während des Exports** – nur außerhalb der Öffnungszeiten und nie, solange JTL-POS produktiv an derselben TSE arbeitet | `tse/EpsonTse.kt`, `export/ExportService.kt` | ja (Admin, Exportmodus) |
+| 9 | **Phase 2a an der echten Hardware:** nur Schritt 3 mit `readOnly`; Ergebnis von `GetStorageInfo` (und `GetStartedTransactionList`) → in `TSE-Plan.md` dokumentieren. Das Gerät wird nach jedem Aufruf freigegeben, damit JTL-POS nicht blockiert wird. Registrierte Clients und Secret-Prüfung sind **keine** reinen Lesezugriffe (Admin-Login bzw. Anmeldeversuch) → erst nach Freigabe des Betreibers | – | nein |
 
 Schritte 1–4 brauchen keine Hardware. Schritt 9 ist der erste Kontakt mit der echten TSE und rein lesend.
 
@@ -156,6 +179,7 @@ Schritte 1–4 brauchen keine Hardware. Schritt 9 ist der erste Kontakt mit der 
 | 3 | erledigt 22.10.2026: `ReadOnlyGuardTransport` (Leseliste inkl. `GetLogMessageCertificate`; `FinalizeExport` nur mit echtem Boolean `deleteData:false`; unlesbares JSON gesperrt; Sperre → `AuditLog` `TSE_SCHREIBSPERRE`), `EpsonJson` (`EpsonException` = Fehlercode, sicher nicht ausgeführt), `EpsonTse` lesend (`status()` über `GetStorageInfo`, `registeredClients()`, Seriennummer Base64→Hex, Mock-Erkennung; Transaktionen werfen bis Schritt 6 → TSE-Ausfall), Einstellungen `TSE_HOST` (leer = Drucker-IP), `TSE_PORT`, `TSE_WRITE_ENABLED` (Schalter nur mit Warndialog, protokolliert), „Verbindung prüfen (nur lesend)“, Bon-Hinweis „MOCK – KEIN GÜLTIGER BELEG“. TimeAdmin-PIN/Secret kommen erst in Schritt 5. 9 Tests; im Emulator gegen den Mock geprüft (Banner, Rohwerte, Warndialog; beim Mock kamen nur lesende Aufrufe an). |
 | 4 | erledigt 22.10.2026: `MockTseFixture` (Mock, Server, Transport, Schreibschutz, `EpsonTse`, gemeinsame steuerbare Uhr); bestehende Mock-Tests darauf umgestellt; `EpsonTseRobustnessTest` (7 Tests). Mock prüft `vendor` jetzt streng. `EpsonTse` hat `commandTimeoutMs`. Erkenntnis: Die TSE gehört genau einer Verbindung – die App muss eine `EpsonTse`-Instanz teilen und beim Wechsel die alte erst schließen (vor Schritt 5 in `AppContainer.tse()` absichern). |
 | 5 | erledigt 22.10.2026: `EpsonTse.ensureReady()` (Self-Test → TimeAdmin-Anmeldung → `UpdateTime`, nur wenn nötig), `withRecovery` (einmalige Wiederherstellung nur nach Fehlercode: Anmeldung abgelaufen, Self-Test, keine Zeit; nie nach „unbekannt“), `syncTime()`. Falsche PIN/Secret: genau ein Versuch, danach keine weiteren bis zur Änderung (PIN wird nicht gesperrt). `CLIENT_NOT_REGISTERED` → Hinweis auf Admin-Ablauf, kein `SetUpForPrinter`. PIN/Secret verschlüsselt (Keystore), nie im Protokoll. TLS mit Fingerabdruck (`TlsPinning`), Mock mit `--tls`. `AppContainer.tse()` schließt die alte Verbindung vor dem Neuaufbau. Oberfläche: TLS-Schalter (Warndialog), Zertifikat bestätigen, PIN/Secret setzen, „Anmeldung testen“. 14 Tests; im Emulator gegen Mock mit TLS geprüft (ohne Bestätigung keine Verbindung, nach Bestätigung Anmeldung erfolgreich, Wiedereinstieg nach Abbruch). |
+| K | erledigt 22.10.2026 – **Korrektur nach offiziellen Epson-Unterlagen** (JSON-Spez. Rev. C, Developer's Guide Rev. B, ePOS-Device-XML-Handbuch Rev. AC, EpsonTseDemo 2.4.1; liegen lokal in `downloads/`, nicht im Repository): Leseliste ohne Admin-Funktionen (Client-Liste, Timeout, Export); `<error>`-Nachrichten, beide Ergebnistypen, Ergebniscodes; `<disconnect>` mit dauerhaft gespeicherter `client_id`; sofortiger Wiedereinstieg mit Übernahme der nachgelieferten Antwort, sonst Sitzung verwerfen; `<timeout>` 60 s / 120 s für Self-Test, Grenzen 100–120000 ms und 64 KB; `open_device` mit Wiederholung bei `DEVICE_IN_USE`; Gerät nach jeder Aktion freigeben (JTL wird nicht blockiert, Abbruch zwischen Aktionen wird vor dem Senden erkannt); mehrstufige Wiederherstellung „über Nacht“, Zeit nach jedem Self-Test; `GetStorageInfo` auch bei `CURRENTLY_EXPORTING`; `remainingRetries`, `isTSEUnlocked`, `timeUntilNextSelfTest`. Mock nach Spezifikation (Prüfreihenfolge, Admin-Rolle, Exportmodus, `EXPORT_INCOMPLETE_SEARCHING`, PEM-Kette, `GetLastTransactionResponse` je Client, `<error>`, `<disconnect>`, Nachlieferung, `CLIENT_NOT_FOUND`). 131 Tests. |
 
 ## Offene Punkte (vor Schritt 7 klären)
 
@@ -163,9 +187,11 @@ Schritte 1–4 brauchen keine Hardware. Schritt 9 ist der erste Kontakt mit der 
   8009 ohne TLS nur für Mock/Development-TSE. Am echten Drucker prüfen: Ist TLS (ePOS-Device SSL) aktiviert,
   und lässt sich der Fingerabdruck auf der Statusseite/in EpsonNet Config ablesen?
 - **Vor Schritt 6:** Verbindung kann im Hintergrund wegbrechen (im Emulator beobachtet: App eingefroren, Mock
-  meldete Abbruch). Der erste Befehl danach ist „Ergebnis unbekannt“. Für Transaktionen deshalb vor
-  `StartTransaction` nach längerer Pause zuerst ein lesender Befehl (`GetStorageInfo`) als Verbindungsprobe –
-  dessen „unbekannt“ ist harmlos. Außerdem: TSE-Banner regelmäßig aktualisieren (zeigt sonst alten Fehler).
+  meldete Abbruch). Durch die Freigabe des Geräts nach jeder Aktion fällt das jetzt beim nächsten `open_device`
+  auf – vor dem Senden, also nicht „unbekannt“ (Korrektur K). Offen: TSE-Banner regelmäßig aktualisieren.
+- Ungeklärt in den Unterlagen: Rolle von `GetStartedTransactionList`/`GetLastTransactionResponse` (als lesend
+  angenommen), TLS auf Port 8143 bei unserem Druckermodell, Feldnamen bei `SetUp` (`adminPin` vs. `adminPIN`),
+  `maxSignatures` (Spez. 10 Mio., Guide 20 Mio.) → in Schritt 9 bzw. mit der Development-TSE prüfen.
 
 - Hat JTL-POS das Shared Secret des Druckers geändert? (Ergebnis aus Schritt 9.)
 - Admin-PIN / PUK der TSE: liegen beim Betreiber? Siehe `TSE-Umzug-Betreiber.md`.

@@ -1,6 +1,7 @@
 package de.anypos
 
 import de.anypos.tse.EpsonJson
+import de.anypos.tse.MemoryClientIdStore
 import de.anypos.tse.TseResultUnknownException
 import de.anypos.tsemock.Fault
 import de.anypos.tsemock.Scenario
@@ -13,8 +14,8 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 /**
- * Schritt 4: lesende EpsonTse unter Störungen gegen die Mock-TSE.
- * Szenariotests für Anmeldung/Zeit (Schritt 5) und Transaktionen (Schritt 6) kommen mit dem jeweiligen Schritt.
+ * Schritt 4 (+ Korrektur nach Epson-Unterlagen): lesende EpsonTse unter Störungen gegen die Mock-TSE.
+ * Szenariotests für Anmeldung/Zeit (Schritt 5) und Transaktionen (Schritt 6) liegen bei den jeweiligen Schritten.
  */
 class EpsonTseRobustnessTest {
 
@@ -23,46 +24,70 @@ class EpsonTseRobustnessTest {
 
     private fun fixture(scenario: Scenario = Scenario.OPERATIONAL) = MockTseFixture(scenario).also { fixtures += it }
 
-    private fun storageInfoCalls(f: MockTseFixture) = f.mock.calls.count { it == "GetStorageInfo" }
+    private fun storageInfoCalls(f: MockTseFixture) = f.count("GetStorageInfo")
 
-    @Test fun reconnectAfterDropWithoutResending() = runBlocking<Unit> {
+    @Test fun deviceIsReleasedAfterEachAction() = runBlocking<Unit> {
         val f = fixture()
         val epson = f.epson()
         assertTrue(epson.status().available)
-        f.server.dropAllConnections()
-        Thread.sleep(100)
-
-        // Abbruch wird erst beim nächsten Kommando bemerkt: nicht verfügbar, nichts ausgeführt
-        val lost = epson.status()
-        assertFalse(lost.available)
-        assertTrue(lost.message, lost.message.startsWith("TSE nicht erreichbar"))
-        assertEquals(1, storageInfoCalls(f))
-
-        // Danach Wiedereinstieg per <reconnect> innerhalb des Sperrfensters
-        assertTrue(epson.status().available)
-        assertEquals(2, storageInfoCalls(f))
-        assertTrue(f.log.toString(), f.log.any { it.contains("Wiedereinstieg erfolgreich") })
+        // Eine andere Anwendung am selben Drucker (eigene Sitzung) bekommt die TSE sofort
+        val other = f.epson(store = MemoryClientIdStore())
+        assertTrue(other.status().available)
+        assertFalse(f.server.blockedAfterDisconnect)
     }
 
-    @Test fun lockedByOtherConnectionReportsDeviceInUse() = runBlocking<Unit> {
+    @Test fun dropBetweenActionsIsDetectedBeforeSending() = runBlocking<Unit> {
         val f = fixture()
-        f.epson().status()
-        f.server.dropAllConnections()
+        val epson = f.epson()
+        assertTrue(epson.status().available)
+        f.server.dropAllConnections() // z. B. App im Hintergrund eingefroren, WLAN weg
         Thread.sleep(100)
 
-        val other = f.epson().status()
-        assertFalse(other.available)
-        assertTrue(other.message, other.message.contains("DEVICE_IN_USE"))
+        // Abbruch fällt beim Öffnen des Geräts auf – vor dem Senden, also nicht „unbekannt“
+        val lost = epson.status()
+        assertFalse(lost.available)
+        assertFalse(lost.message, lost.message.contains("unbekannt"))
+        assertEquals(1, storageInfoCalls(f))
+
+        // Danach neue Sitzung; die alte wird per <disconnect> beendet
+        assertTrue(epson.status().available)
+        assertEquals(2, storageInfoCalls(f))
+        assertTrue(f.log.toString(), f.log.any { it.contains("Alte Sitzung beendet") })
+    }
+
+    @Test fun lockedByOtherApplicationUntilWindowExpires() = runBlocking<Unit> {
+        val f = fixture()
+        val holder = f.rawTransport(store = MemoryClientIdStore()) // andere Anwendung hält das Gerät offen …
+        holder.open()
+        f.server.dropAllConnections()                              // … und bricht ab
+        Thread.sleep(100)
+
+        val status = f.epson(store = MemoryClientIdStore()).status()
+        assertFalse(status.available)
+        assertTrue(status.message, status.message.contains("DEVICE_IN_USE"))
         assertTrue(f.server.blockedAfterDisconnect)
 
-        // Nach Ablauf des Sperrfensters bekommt auch eine neue Verbindung die TSE
+        // Nach Ablauf des Sperrfensters bekommt eine neue Verbindung die TSE
         f.advance(61_000)
+        assertTrue(f.epson(store = MemoryClientIdStore()).status().available)
+    }
+
+    @Test fun ownSessionAfterRestartIsFreedImmediately() = runBlocking<Unit> {
+        val f = fixture()
+        val before = f.rawTransport()     // dieselbe App (gleiche gespeicherte client_id) …
+        before.open()
+        f.server.dropAllConnections()      // … stürzt ab, während das Gerät offen ist
+        Thread.sleep(100)
+        assertTrue(f.server.blockedAfterDisconnect)
+
+        // Nach dem Neustart beendet die App ihre alte Sitzung per <disconnect> – keine Minute Sperre
         assertTrue(f.epson().status().available)
+        assertEquals(1, f.server.disconnects.size)
     }
 
     @Test fun errorCodesMeanUnavailableAndNotExecuted() = runBlocking<Unit> {
         val f = fixture()
-        val epson = f.epson() // die TSE gehört immer genau einer Verbindung
+        val epson = f.epson()
         for (code in listOf("TSE1_ERROR_NO_TSE", "OTHER_ERROR_NO_STORAGE_FOUND", "TSE1_ERROR_IO")) {
             f.mock.inject(code, "GetStorageInfo")
             val status = epson.status()
@@ -77,27 +102,43 @@ class EpsonTseRobustnessTest {
         val f = fixture()
         val epson = f.epson(commandTimeoutMs = 100)
         assertTrue(epson.status().available)
-        f.server.injectFault(Fault.NO_ANSWER, "GetRegisteredClientList")
-        try { epson.registeredClients(); fail() } catch (e: TseResultUnknownException) {
-            assertEquals("GetRegisteredClientList", e.function)
+        f.server.injectFault(Fault.NO_ANSWER, "GetStartedTransactionList")
+        try { epson.startedTransactions(); fail() } catch (e: TseResultUnknownException) {
+            assertEquals("GetStartedTransactionList", e.function)
         }
-        assertEquals(1, f.mock.calls.count { it == "GetRegisteredClientList" })
-        // Danach Wiedereinstieg; die verspätete Antwort ist längst verworfen
-        assertEquals(listOf("JTL-POS-1", "KASSE-01"), epson.registeredClients())
+        assertEquals(1, f.count("GetStartedTransactionList"))
+        // Danach neue Sitzung (alte per <disconnect> beendet); eine späte Antwort kann nicht mehr zugeordnet werden
+        assertEquals(emptyList<Long>(), epson.startedTransactions())
+        assertEquals(2, f.count("GetStartedTransactionList"))
+    }
+
+    @Test fun storageInfoWhileExporting() = runBlocking<Unit> {
+        val f = fixture()
+        // Export läuft (z. B. von JTL gestartet): GetStorageInfo meldet CURRENTLY_EXPORTING, liefert aber Daten (Epson-Demo)
+        f.writeEnabled = true
+        val t = f.guardedTransport()
+        val challenge = EpsonJson.output("GetChallenge", t.operate(EpsonJson.request("GetChallenge", mapOf("userId" to "Administrator"), vendor = "TSE1")))["challenge"].toString().trim('"')
+        EpsonJson.output("AuthenticateUserForAdmin", t.operate(EpsonJson.request("AuthenticateUserForAdmin",
+            mapOf("userId" to "Administrator", "pin" to "11111", "hash" to de.anypos.tse.EpsonTse.hash(challenge, "EPSONKEY")), vendor = "TSE1")))
+        EpsonJson.output("ArchiveExport", t.operate(EpsonJson.request("ArchiveExport", mapOf("clientId" to ""), vendor = "TSE1")))
+        t.close()
+        t.disconnect()
+
+        val status = f.epson().status()
+        assertTrue(status.message, status.available)
     }
 
     @Test fun vendorFromStorageInfoIsSent() = runBlocking<Unit> {
         val f = fixture()
         // Der Mock lehnt TSE-Aufrufe ohne passenden vendor ab ...
         val raw = f.guardedTransport()
-        val wrong = raw.operate(EpsonJson.request("GetRegisteredClientList", vendor = ""))
+        val wrong = raw.operate(EpsonJson.request("GetStartedTransactionList", mapOf("clientId" to "KASSE-01"), vendor = ""))
         assertEquals("JSON_ERROR_UNEXPECTED_STORAGE_VENDOR", EpsonJson.parseObject(wrong)!!["result"].toString().trim('"'))
-        raw.close() // Gerät freigeben, sonst DEVICE_IN_USE für die nächste Verbindung
+        raw.close() // Gerät freigeben
         raw.disconnect()
         // ... EpsonTse holt vendorType vorher selbst und kommt durch
-        val epson = f.epson()
-        assertEquals(listOf("JTL-POS-1", "KASSE-01"), epson.registeredClients())
-        assertEquals(listOf("GetRegisteredClientList", "GetStorageInfo", "GetRegisteredClientList"), f.mock.calls)
+        assertEquals(emptyList<Long>(), f.epson().startedTransactions())
+        assertEquals(listOf("GetStartedTransactionList", "GetStorageInfo", "GetStartedTransactionList"), f.mock.calls)
     }
 
     @Test fun scenariosInStatus() = runBlocking<Unit> {
@@ -122,7 +163,7 @@ class EpsonTseRobustnessTest {
     @Test fun readPathNeverWrites() = runBlocking<Unit> {
         val f = fixture(Scenario.JTL_TAKEOVER)
         val epson = f.epson()
-        repeat(3) { epson.status(); epson.registeredClients() }
+        repeat(3) { epson.status(); epson.startedTransactions() }
         assertTrue(f.mock.writeCalls.isEmpty())
         assertTrue(f.blocked.isEmpty())
     }

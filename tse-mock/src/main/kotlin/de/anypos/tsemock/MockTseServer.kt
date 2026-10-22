@@ -31,12 +31,14 @@ enum class Fault {
 }
 
 /**
- * TCP-Server mit dem ePOS-Device-XML-Protokoll des Epson-Druckers (Nachrichten enden mit '\0').
+ * TCP-Server mit dem ePOS-Device-XML-Protokoll des Epson-Druckers (Handbuch Rev. AC; Nachrichten enden mit '\0').
  *
- * - Begrüßung `<connect>` mit `client_id`, danach `open_device` / `device_data` / `close_device` / `reconnect`.
+ * - Begrüßung `<connect>` mit `client_id`, danach `open_device` / `device_data` / `close_device` / `reconnect` / `disconnect`.
  * - Die TSE gehört immer genau einer Verbindung. Bricht diese ab, bleibt die TSE [MockConfig.reconnectWindowMs]
- *   für andere gesperrt (`DEVICE_IN_USE`); nur `<reconnect>` mit der alten `client_id` übernimmt die Sitzung.
- * - `<sequence>` in `device_data` ist optional und wird, falls vorhanden, in der Antwort zurückgegeben.
+ *   für andere gesperrt (`DEVICE_IN_USE`); `<reconnect>` mit der alten `client_id` übernimmt die Sitzung und liefert
+ *   eine zurückgehaltene Antwort nach, `<disconnect>` mit der alten `client_id` gibt die TSE sofort frei.
+ * - Fehler zu `device_data` kommen als eigene `<error>`-Nachricht (Handbuch S. 82).
+ * - Ergebnistyp umschaltbar ([resultType]): Handbuch „operateresult“, Developer's Guide „onoperateresult“.
  *
  * Protokolliert werden nur Funktion und Ergebnis, nie JSON-Inhalte.
  */
@@ -46,6 +48,7 @@ class MockTseServer(
     bindAddress: InetAddress? = InetAddress.getLoopbackAddress(),
     /** TLS wie Port 8143 am Drucker; null = Klartext wie Port 8009. */
     tls: SSLContext? = null,
+    private val resultType: String = "operateresult",
     private val log: (String) -> Unit = {},
 ) : Closeable {
 
@@ -60,6 +63,8 @@ class MockTseServer(
     private var owner: Session? = null
     private var lostOwnerId: String? = null
     private var lostAt = 0L
+    /** Antworten, die wegen eines Abbruchs nicht zugestellt wurden: client_id → XML (Nachlieferung nach reconnect). */
+    private val undelivered = mutableMapOf<String, String>()
     private val faults = ArrayDeque<Pair<Fault, String?>>()
 
     private val clock get() = tse.config.clock
@@ -85,6 +90,9 @@ class MockTseServer(
     /** Sperre nach einem Abbruch noch aktiv? */
     val blockedAfterDisconnect: Boolean get() = synchronized(lock) { lostOwnerId != null && clock() - lostAt <= tse.config.reconnectWindowMs }
 
+    /** Empfangene `<disconnect>`-Nachrichten (client_id), für Tests. */
+    val disconnects: MutableList<String> = Collections.synchronizedList(mutableListOf())
+
     override fun close() {
         server.close()
         dropAllConnections()
@@ -107,6 +115,7 @@ class MockTseServer(
                         "open_device" -> openDevice(msg)
                         "close_device" -> closeDevice()
                         "reconnect" -> reconnect(msg)
+                        "disconnect" -> if (!disconnect(msg)) break
                         "device_data" -> if (!deviceData(msg)) break
                         else -> log("$clientId: unbekannte Nachricht <${msg.tagName}>")
                     }
@@ -147,45 +156,76 @@ class MockTseServer(
             send("<close_device><device_id>$DEVICE_ID</device_id><code>$code</code><data_id>${dataCounter.incrementAndGet()}</data_id></close_device>")
         }
 
+        /** Handbuch S. 67: Antwort nur mit code (OK, CLIENT_NOT_FOUND …); danach Nachlieferung zurückgehaltener Daten. */
         private fun reconnect(msg: Element) {
             val old = msg.text("old_client_id")
+            var redeliver: String? = null
             val code = synchronized(lock) {
                 if (old != null && old == lostOwnerId && blockedAfterDisconnect && owner == null) {
                     owner = this
                     lostOwnerId = null
+                    redeliver = undelivered.remove(old)
                     "OK"
-                } else "PARAM_ERROR"
+                } else "CLIENT_NOT_FOUND"
             }
-            log("$clientId: reconnect von $old $code")
-            send("<reconnect><code>$code</code><data_id>${dataCounter.incrementAndGet()}</data_id></reconnect>")
+            log("$clientId: reconnect von $old $code${if (redeliver != null) ", Antwort wird nachgeliefert" else ""}")
+            send("<reconnect><code>$code</code></reconnect>")
+            redeliver?.let { send(it) }
+        }
+
+        /** Handbuch S. 68: beendet die Sitzung [client_id] und gibt die TSE frei. @return false = eigene Sitzung beendet. */
+        private fun disconnect(msg: Element): Boolean {
+            val id = msg.child("data")?.text("client_id") ?: msg.text("client_id")
+            if (id != null) disconnects += id
+            var other: Session? = null
+            synchronized(lock) {
+                if (id != null && id == lostOwnerId) lostOwnerId = null
+                if (id != null) undelivered.remove(id)
+                val target = sessions.firstOrNull { it.clientId == id }
+                if (target != null && owner === target) owner = null
+                if (target != null && target !== this) other = target
+            }
+            log("$clientId: disconnect $id OK")
+            send("<disconnect><code>OK</code></disconnect>")
+            other?.socket?.close()
+            return id != clientId
         }
 
         /** @return false, wenn die Verbindung absichtlich getrennt wurde. */
         private fun deviceData(msg: Element): Boolean {
-            val sequence = msg.text("sequence")?.let { "<sequence>$it</sequence>" }.orEmpty()
             val data = msg.child("data")
             if (data?.text("type") != "operate") return true
             val isOwner = synchronized(lock) { owner === this }
             if (!isOwner) {
-                send("<device_data>$sequence<device_id>$DEVICE_ID</device_id><data><type>onoperateresult</type>" +
-                    "<success>false</success><code>DEVICE_NOT_OPEN</code></data><data_id>${dataCounter.incrementAndGet()}</data_id></device_data>")
+                // Fehler als eigene Nachricht (Handbuch S. 82–83)
+                send("<error><device_id>$DEVICE_ID</device_id><code>DEVICE_NOT_OPEN</code><data></data>" +
+                    "<data_id>${dataCounter.incrementAndGet()}</data_id></error>")
                 return true
             }
             val request = data.text("requestdata").orEmpty()
             val function = Regex("\"function\"\\s*:\\s*\"([^\"]+)\"").find(request)?.groupValues?.get(1) ?: "?"
             when (takeFault(function)) {
                 Fault.DROP_BEFORE_EXECUTE -> { log("$clientId: $function – Störung: Abbruch vor Ausführung"); return false }
-                Fault.DROP_AFTER_EXECUTE -> { tse.handle(request); log("$clientId: $function – Störung: Abbruch nach Ausführung"); return false }
+                Fault.DROP_AFTER_EXECUTE -> {
+                    // Antwort wird zurückgehalten und nach einem <reconnect> nachgeliefert
+                    val held = resultXml(tse.handle(request))
+                    synchronized(lock) { undelivered[clientId] = held }
+                    log("$clientId: $function – Störung: Abbruch nach Ausführung")
+                    return false
+                }
                 Fault.NO_ANSWER -> { tse.handle(request); log("$clientId: $function – Störung: keine Antwort"); return true }
                 null -> Unit
             }
             val result = tse.handle(request)
             log("$clientId: $function → ${Regex("\"result\"\\s*:\\s*\"([^\"]+)\"").find(result)?.groupValues?.get(1)}")
-            send("<device_data>$sequence<device_id>$DEVICE_ID</device_id><data><type>onoperateresult</type>" +
-                "<success>true</success><code>SUCCESS</code><resultdata>${escape(result)}</resultdata></data>" +
-                "<data_id>${dataCounter.incrementAndGet()}</data_id></device_data>")
+            send(resultXml(result))
             return true
         }
+
+        private fun resultXml(result: String) =
+            "<device_data><sequence>0</sequence><device_id>$DEVICE_ID</device_id><data><type>$resultType</type>" +
+                "<success>true</success><code>SUCCESS</code><resultdata>${escape(result)}</resultdata></data>" +
+                "<data_id>${dataCounter.incrementAndGet()}</data_id></device_data>"
 
         private fun read(): String? {
             val buf = ByteArrayOutputStream()

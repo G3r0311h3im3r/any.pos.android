@@ -101,9 +101,9 @@ fun TseEpsonSection(container: AppContainer, user: User, onMessage: (String) -> 
                     val tse = container.tse() as EpsonTse
                     try {
                         val info = tse.storageInfo()
-                        val clients = try { tse.registeredClients().joinToString() } catch (e: TseException) { "Fehler: ${e.message}" }
-                        details = info.details() + ("registeredClientIdList" to clients)
-                        container.audit.log(user.name, "TSE_PRUEFUNG", "GetStorageInfo, GetRegisteredClientList")
+                        val open = try { tse.startedTransactions().joinToString().ifEmpty { "keine" } } catch (e: TseException) { "nicht lesbar: ${e.message}" }
+                        details = info.details() + ("offene Transaktionen (${container.settings[Key.REGISTER_ID]})" to open)
+                        container.audit.log(user.name, "TSE_PRUEFUNG", "GetStorageInfo, GetStartedTransactionList")
                     } catch (e: TseException) {
                         details = null
                         throw TseException("TSE nicht erreichbar: ${e.message}")
@@ -124,8 +124,12 @@ fun TseEpsonSection(container: AppContainer, user: User, onMessage: (String) -> 
                 }
             }) { Text("Anmeldung testen") }
         }
-        if (!writeOn) Text("„Anmeldung testen“ braucht Schreibzugriff (Anmelden und Zeit setzen sind schreibende TSE-Befehle).",
-            style = MaterialTheme.typography.bodySmall)
+        Text(
+            (if (!writeOn) "„Anmeldung testen“ braucht Schreibzugriff (Anmelden und Zeit setzen sind schreibende TSE-Befehle). " else "") +
+                "Die TSE prüft beim Anmelden nicht, ob die Kasse registriert ist – das zeigt sich erst beim ersten Beleg. " +
+                "Die Liste der registrierten Kassen ist nur mit Admin-Anmeldung lesbar.",
+            style = MaterialTheme.typography.bodySmall,
+        )
 
         details?.let { rows ->
             Column {

@@ -27,7 +27,7 @@ import java.time.temporal.ChronoUnit
 import java.util.Base64
 
 /** Fehler mit Epson-Ergebniscode; wird als `result` zurückgegeben. */
-class MockTseError(val code: String) : Exception(code)
+class MockTseError(val code: String, val output: JsonObject? = null) : Exception(code)
 
 /**
  * Nachbildung der Epson-TSE auf JSON-Ebene (`requestdata` → `resultdata`), ohne Netzwerk.
@@ -43,7 +43,7 @@ class MockTseError(val code: String) : Exception(code)
 class MockTse(val config: MockConfig = MockConfig()) {
 
     private data class StartedTx(val number: Long, val clientId: String, val startedAt: Long)
-    private class Export(val data: ByteArray, var offset: Int = 0)
+    private class Export(val data: ByteArray, val archive: Boolean, var offset: Int = 0, var searched: Boolean = false)
     private class Injection(val code: String, val function: String?)
 
     private val privateKey: PrivateKey
@@ -82,7 +82,8 @@ class MockTse(val config: MockConfig = MockConfig()) {
     private val started = sortedMapOf<Long, StartedTx>()
     private var lastTxNumber = 0L
     private var signatureCounter = 0L
-    private var lastTransactionResponse: JsonObject? = null
+    private var lastResponse: JsonObject? = null
+    private val lastResponseByClient = mutableMapOf<String, JsonObject>()
     private var export: Export? = null
     private var lastExportAt: Long? = null
     private val journal = mutableListOf<String>()
@@ -128,7 +129,7 @@ class MockTse(val config: MockConfig = MockConfig()) {
         val function = request.str("function") ?: return result("JSON_ERROR_NOT_ENOUGH_CONTENTS", "")
         val input = (request["input"] as? JsonObject) ?: JsonObject(emptyMap())
         callLog += function
-        if (!isReadOnly(function, input)) writeLog += function
+        if (!isReadOnly(function)) writeLog += function
 
         injected.firstOrNull { it.function == null || it.function == function }?.let {
             injected.remove(it)
@@ -136,10 +137,17 @@ class MockTse(val config: MockConfig = MockConfig()) {
         }
         return try {
             checkStorage(function, request)
+            checkExportMode(function)
             result(EXECUTION_OK, function, execute(function, input))
         } catch (e: MockTseError) {
-            result(e.code, function)
+            result(e.code, function, e.output)
         }
+    }
+
+    /** Im Exportmodus nimmt die TSE nur Export-Befehle an (Spez. S. 45); GetStorageInfo meldet den Zustand mit Daten. */
+    private fun checkExportMode(function: String) {
+        if (export == null || function in EXPORT_MODE_ALLOWED) return
+        throw MockTseError(CURRENTLY_EXPORTING, if (function == "GetStorageInfo") storageInfo() else null)
     }
 
     private fun checkStorage(function: String, request: JsonObject) {
@@ -168,15 +176,15 @@ class MockTse(val config: MockConfig = MockConfig()) {
             requireInitialized()
             authenticate(userId, input, "admin", config.adminPin)
             adminLoggedIn = true
-            buildJsonObject { put("authenticationResult", "AUTHENTICATION_OK"); put("remainingRetries", config.maxPinAttempts) }
+            null // bei Erfolg kein remainingRetries (Spez. S. 26)
         }
         "AuthenticateUserForTimeAdmin" -> {
+            // Prüft NICHT, ob der Client registriert ist (Guide S. 30) – das fällt erst bei StartTransaction auf
             val clientId = input.required("clientId")
             requireInitialized()
-            if (clientId !in clients) throw MockTseError("TSE1_ERROR_CLIENT_NOT_REGISTERED")
-            authenticate(clientId, input, "timeAdmin", config.timeAdminPin)
+            authenticate(clientId, input, "timeAdmin", config.timeAdminPin, requireSelfTest = true)
             timeAdmins[clientId] = config.clock()
-            buildJsonObject { put("authenticationResult", "AUTHENTICATION_OK"); put("remainingRetries", config.maxPinAttempts) }
+            null
         }
         "LogOutForAdmin" -> {
             if (!adminLoggedIn) throw MockTseError("TSE1_ERROR_AUTHENTICATION_USER_NOT_LOGGED_IN")
@@ -207,6 +215,9 @@ class MockTse(val config: MockConfig = MockConfig()) {
         "RunTSESelfTest" -> {
             if (boundToOtherHost) throw MockTseError("TSE1_ERROR_CLIENT_NOT_REGISTERED")
             selfTestAt = config.clock()
+            // Der Self-Test setzt die Uhr zurück und beendet Anmeldungen (Guide S. 21, 29)
+            timeSetAt = null
+            timeAdmins.clear()
             null
         }
         "UpdateTime", "UpdateTimeForFirst" -> {
@@ -237,7 +248,18 @@ class MockTse(val config: MockConfig = MockConfig()) {
             timeAdmins -= clientId
             null
         }
-        "GetRegisteredClientList" -> buildJsonObject { putJsonArray("registeredClientIdList") { clients.forEach { add(JsonPrimitive(it)) } } }
+        "GetRegisteredClientList" -> {
+            requireAdmin() // Rolle Admin (Spez. S. 18)
+            buildJsonObject { putJsonArray("registeredClientIdList") { clients.forEach { add(JsonPrimitive(it)) } } }
+        }
+        "GetTimeOutInterval" -> {
+            requireAdmin() // Rolle Admin (Spez. S. 22)
+            buildJsonObject {
+                put("timeOutIntervalForAdmin", 900)
+                put("timeOutIntervalForTimeAdmin", config.timeAdminTimeoutMs / 1000)
+                put("timeOutIntervalForExport", 100)
+            }
+        }
         "StartTransaction" -> {
             val clientId = input.required("clientId")
             requireOperational(clientId)
@@ -252,7 +274,7 @@ class MockTse(val config: MockConfig = MockConfig()) {
                 put("serialNumber", b64(serialNumber))
                 put("signatureCounter", signatureCounter)
                 put("signature", sig)
-            }.also { lastTransactionResponse = it }
+            }.also { remember(clientId, number, it) }
         }
         "UpdateTransaction", "FinishTransaction" -> {
             val clientId = input.required("clientId")
@@ -267,7 +289,7 @@ class MockTse(val config: MockConfig = MockConfig()) {
                 put("logTime", logTime)
                 put("signatureCounter", signatureCounter)
                 put("signature", sig)
-            }.also { lastTransactionResponse = it }
+            }.also { remember(clientId, number, it) }
         }
         "GetStartedTransactionList" -> {
             val clientId = input.str("clientId").orEmpty()
@@ -277,38 +299,49 @@ class MockTse(val config: MockConfig = MockConfig()) {
                 }
             }
         }
-        "GetLastTransactionResponse" -> lastTransactionResponse ?: throw MockTseError("TSE1_ERROR_NO_LAST_TRANSACTION")
-        "GetLogMessageCertificate" -> buildJsonObject { put("logMessageCertificate", b64(certificate.encoded)) }
+        "GetLastTransactionResponse" -> {
+            // je clientId, "" = global (Spez. S. 44)
+            val clientId = input.str("clientId").orEmpty()
+            (if (clientId.isEmpty()) lastResponse else lastResponseByClient[clientId]) ?: throw MockTseError("TSE1_ERROR_NO_LAST_TRANSACTION")
+        }
+        "GetLogMessageCertificate" -> buildJsonObject { put("logMessageCertificate", b64(certificatePem().toByteArray())) }
         "ArchiveExport", "ExportFilteredByTransactionNumber", "ExportFilteredByTransactionNumberInterval",
         "ExportFilteredByPeriodOfTime" -> {
-            if (export != null) throw MockTseError("OTHER_ERROR_CURRENTLY_EXPORTING")
-            if (initState == UNINITIALIZED) throw MockTseError("TSE1_ERROR_TSE_NOT_INITIALIZED")
-            export = Export(exportTar(fn))
+            requireAdmin() // Rolle Admin (Spez. S. 45–49)
+            if (!hasValidTime()) throw MockTseError("OTHER_ERROR_NO_TIME_SET_BEFORE_EXPORT")
+            export = Export(exportTar(fn), archive = fn == "ArchiveExport")
             null
         }
         "GetExportData" -> {
+            requireAdmin()
             val e = export ?: throw MockTseError("OTHER_ERROR_NO_EXPORT_STARTED")
-            val end = minOf(e.offset + config.exportChunkSize, e.data.size)
-            val chunk = e.data.copyOfRange(e.offset, end)
-            e.offset = end
-            buildJsonObject {
-                put("exportData", b64(chunk))
-                put("exportStatus", if (end == e.data.size) "EXPORT_COMPLETE" else "EXPORT_INCOMPLETE")
+            if (!e.searched) {
+                // Erste Abfrage: TSE sucht noch, keine Daten (Spez. S. 51)
+                e.searched = true
+                buildJsonObject { put("exportData", ""); put("exportStatus", "EXPORT_INCOMPLETE_SEARCHING") }
+            } else {
+                val end = minOf(e.offset + config.exportChunkSize, e.data.size)
+                val chunk = e.data.copyOfRange(e.offset, end)
+                e.offset = end
+                buildJsonObject {
+                    put("exportData", b64(chunk))
+                    put("exportStatus", if (end == e.data.size) "EXPORT_COMPLETE" else "EXPORT_INCOMPLETE")
+                }
             }
         }
         "FinalizeExport" -> {
+            requireAdmin()
             val e = export ?: throw MockTseError("OTHER_ERROR_NO_EXPORT_STARTED")
             if (e.offset < e.data.size) throw MockTseError("OTHER_ERROR_ALL_DATA_NOT_EXPORTED_YET")
             val delete = (input["deleteData"] as? JsonPrimitive)?.booleanOrNull ?: false
-            if (delete) {
-                requireAdmin()
-                journal.clear()
-            }
+            // deleteData wirkt nur nach ArchiveExport (Spez. S. 52)
+            if (delete && e.archive) journal.clear()
             export = null
             lastExportAt = config.clock()
             null
         }
         "CancelExport" -> {
+            requireAdmin()
             if (export == null) throw MockTseError("OTHER_ERROR_NO_EXPORT_STARTED")
             export = null
             null
@@ -318,14 +351,19 @@ class MockTse(val config: MockConfig = MockConfig()) {
 
     // --- Prüfungen
 
-    private fun authenticate(userId: String, input: JsonObject, role: String, pin: String) {
+    private fun authenticate(userId: String, input: JsonObject, role: String, pin: String, requireSelfTest: Boolean = false) {
         val challenge = challenges.remove(userId) ?: throw MockTseError("OTHER_ERROR_HOST_AUTHENTICATION_FAILED")
         if (input.required("hash") != hash(challenge, secret)) throw MockTseError("OTHER_ERROR_HOST_AUTHENTICATION_FAILED")
+        // Guide S. 25: abgelaufene Anmeldung + fälliger Self-Test → die Neuanmeldung verlangt den Self-Test
+        if (requireSelfTest && !selfTestPassed()) throw MockTseError("TSE1_ERROR_WRONG_STATE_NEEDS_SELF_TEST_PASSED")
         val failures = pinFailures[role] ?: 0
         if (failures >= config.maxPinAttempts) throw MockTseError("TSE1_ERROR_AUTHENTICATION_PIN_BLOCKED")
         if (input.required("pin") != pin) {
             pinFailures[role] = failures + 1
-            throw MockTseError(if (failures + 1 >= config.maxPinAttempts) "TSE1_ERROR_AUTHENTICATION_PIN_BLOCKED" else "TSE1_ERROR_AUTHENTICATION_FAILED")
+            val left = config.maxPinAttempts - failures - 1
+            if (left <= 0) throw MockTseError("TSE1_ERROR_AUTHENTICATION_PIN_BLOCKED")
+            // remainingRetries nur bei Fehlschlag (Spez. S. 26)
+            throw MockTseError("TSE1_ERROR_AUTHENTICATION_FAILED", buildJsonObject { put("remainingRetries", left) })
         }
         pinFailures[role] = 0
     }
@@ -358,14 +396,32 @@ class MockTse(val config: MockConfig = MockConfig()) {
         return config.timeValidityMs?.let { config.clock() - set <= it } ?: true
     }
 
-    /** Reihenfolge wie die echte TSE: Initialisierung → Self-Test → Client → Zeit → Anmeldung. */
+    /**
+     * Reihenfolge nach Guide S. 25: Initialisierung → Anmeldung → Self-Test → Zeit → Client registriert.
+     * (Abgelaufene Anmeldung meldet sich zuerst; die Registrierung prüft erst die Transaktion, Guide S. 30.)
+     */
     private fun requireOperational(clientId: String) {
         requireInitialized()
-        if (!selfTestPassed()) throw MockTseError("TSE1_ERROR_WRONG_STATE_NEEDS_SELF_TEST_PASSED")
-        if (clientId !in clients) throw MockTseError("TSE1_ERROR_CLIENT_NOT_REGISTERED")
-        if (!hasValidTime()) throw MockTseError("TSE1_ERROR_NO_TIME_SET")
         if (!timeAdminActive(clientId)) throw MockTseError("OTHER_ERROR_UNAUTHENTICATED_TIME_ADMIN_USER")
+        if (!selfTestPassed()) throw MockTseError("TSE1_ERROR_WRONG_STATE_NEEDS_SELF_TEST_PASSED")
+        if (!hasValidTime()) throw MockTseError("TSE1_ERROR_NO_TIME_SET")
+        if (clientId !in clients) throw MockTseError("TSE1_ERROR_CLIENT_NOT_REGISTERED")
     }
+
+    private fun remember(clientId: String, number: Long, response: JsonObject) {
+        // Vollständige Antwort wie GetLastTransactionResponse (Spez. S. 44)
+        val full = JsonObject(response + mapOf(
+            "transactionNumber" to JsonPrimitive(number),
+            "serialNumber" to JsonPrimitive(b64(serialNumber)),
+        ))
+        lastResponse = full
+        lastResponseByClient[clientId] = full
+    }
+
+    /** Zertifikatskette als PEM (Blatt zuerst), wie GetLogMessageCertificate sie liefert (Spez. S. 54). */
+    private fun certificatePem(): String =
+        "-----BEGIN CERTIFICATE-----\n" + Base64.getMimeEncoder(64, "\n".toByteArray()).encodeToString(certificate.encoded) +
+            "\n-----END CERTIFICATE-----\n"
 
     private fun decodeProcessData(input: JsonObject): ByteArray {
         input.required("processType")
@@ -451,7 +507,7 @@ class MockTse(val config: MockConfig = MockConfig()) {
             put("certificateExpirationDate", ISO.format(certificate.notAfter.toInstant().truncatedTo(ChronoUnit.SECONDS)))
             put("tarExportSize", exportTar("GetStorageInfo").size)
             put("isTransactionInProgress", started.isNotEmpty())
-            put("isTseUnlocked", true)
+            put("isTSEUnlocked", true)
             put("serialNumber", b64(serialNumber))
             put("tsePublicKey", b64(publicKey))
             put("signatureAlgorithm", "ecdsa-plain-SHA256")
@@ -470,6 +526,8 @@ class MockTse(val config: MockConfig = MockConfig()) {
         put("result", code)
         put("function", function)
         put("output", output ?: JsonObject(emptyMap()))
+        // Fehlerdetails wie bei Epson (Spez. S. 7/9)
+        if (code != EXECUTION_OK) putJsonObject("error") { put("fact", "MOCK"); put("errorinfo", code) }
     }.toString()
 
     companion object {
@@ -478,21 +536,21 @@ class MockTse(val config: MockConfig = MockConfig()) {
         const val UNINITIALIZED = "UNINITIALIZED"
         const val INITIALIZED = "INITIALIZED"
         const val DECOMMISSIONED = "DECOMMISSIONED"
-        private const val MAX_SIGNATURES = 20_000_000L
+        /** Spez. S. 56 (der Guide nennt 20 Mio.). */
+        private const val MAX_SIGNATURES = 10_000_000L
+        private const val CURRENTLY_EXPORTING = "OTHER_ERROR_CURRENTLY_EXPORTING"
+        private val EXPORT_MODE_ALLOWED = setOf("GetExportData", "FinalizeExport", "CancelExport")
         private const val KEY_ALIAS = "mock-tse"
         private val KEY_PASSWORD = "mocktse".toCharArray()
         private val ISO: DateTimeFormatter = DateTimeFormatter.ISO_INSTANT.withZone(ZoneOffset.UTC)
 
         /** Funktionen, die laut TSE-Entwicklung.md bei `TSE_WRITE_ENABLED = false` passieren dürfen. */
         val READ_ONLY = setOf(
-            "GetStorageInfo", "GetChallenge", "GetTimeOutInterval", "GetStartedTransactionList",
-            "GetRegisteredClientList", "GetLastTransactionResponse", "GetLogMessageCertificate",
-            "ArchiveExport", "GetExportData", "FinalizeExport", "CancelExport",
+            "GetStorageInfo", "GetChallenge", "GetStartedTransactionList",
+            "GetLastTransactionResponse", "GetLogMessageCertificate",
         )
 
-        fun isReadOnly(function: String, input: JsonObject): Boolean =
-            function in READ_ONLY &&
-                (function != "FinalizeExport" || (input["deleteData"] as? JsonPrimitive)?.booleanOrNull == false)
+        fun isReadOnly(function: String): Boolean = function in READ_ONLY
 
         /** Anmelde-Hash wie bei Epson: Base64(SHA-256(UTF-8(challenge + secret))). */
         fun hash(challenge: String, secret: String): String = b64(sha256((challenge + secret).toByteArray(Charsets.UTF_8)))

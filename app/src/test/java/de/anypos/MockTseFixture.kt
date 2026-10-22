@@ -1,7 +1,9 @@
 package de.anypos
 
+import de.anypos.tse.ClientIdStore
 import de.anypos.tse.EposXmlSocketTransport
 import de.anypos.tse.EpsonTse
+import de.anypos.tse.MemoryClientIdStore
 import de.anypos.tse.ReadOnlyGuardTransport
 import de.anypos.tse.TlsPinning
 import de.anypos.tse.TseCredentials
@@ -47,18 +49,24 @@ class MockTseFixture(
 
     fun advance(ms: Long) { offset += ms }
 
-    /** Transport ohne Schreibschutz – nur für Protokolltests. */
-    fun rawTransport(connectTimeoutMs: Int = 1_000) = EposXmlSocketTransport(
+    /** Gespeicherte client_id (wie SharedPreferences in der App), gemeinsam für alle hier gebauten Transporte. */
+    val clientIds = MemoryClientIdStore()
+
+    /** Transport ohne Schreibschutz – nur für Protokolltests. Kurze Fristen, damit Tests mit Sperren und Nachlieferung schnell laufen. */
+    fun rawTransport(connectTimeoutMs: Int = 1_000, openAttempts: Int = 2, store: ClientIdStore = clientIds) = EposXmlSocketTransport(
         "127.0.0.1", server.port,
         socketFactory = if (tls) TlsPinning.pinnedSocketFactory(fingerprint) else SocketFactory.getDefault(),
-        connectTimeoutMs = connectTimeoutMs, handshakeTimeoutMs = 2_000,
-        reconnectDrainMs = 100, clock = clock, log = { log += it },
+        connectTimeoutMs = connectTimeoutMs, handshakeTimeoutMs = 2_000, openTimeoutMs = 2_000,
+        openAttempts = openAttempts, openRetryDelayMs = 50, redeliveryWaitMs = 500,
+        clientIdStore = store, clock = clock, log = { log += it },
     )
 
-    fun guardedTransport() = ReadOnlyGuardTransport(rawTransport(), writeEnabled = { writeEnabled }, onBlocked = { blocked += it })
+    fun guardedTransport(store: ClientIdStore = clientIds) =
+        ReadOnlyGuardTransport(rawTransport(store = store), writeEnabled = { writeEnabled }, onBlocked = { blocked += it })
 
-    fun epson(clientId: String = "KASSE-01", commandTimeoutMs: Int = 10_000) = EpsonTse(
-        guardedTransport(), clientId = { clientId },
+    /** [store] = eigene Ablage simuliert eine andere Anwendung am selben Drucker (z. B. JTL-POS). */
+    fun epson(clientId: String = "KASSE-01", commandTimeoutMs: Int = 10_000, store: ClientIdStore = clientIds) = EpsonTse(
+        guardedTransport(store), clientId = { clientId },
         credentials = { pin?.let { TseCredentials(it, secret) } },
         clock = clock, commandTimeoutMs = commandTimeoutMs, encrypted = tls,
     )
