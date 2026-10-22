@@ -55,6 +55,8 @@ fun CashBookScreen(container: AppContainer, user: User) {
     var refresh by remember { mutableIntStateOf(0) }
     var movement by remember { mutableStateOf<String?>(null) }
     var movementAmount by remember { mutableStateOf<Long?>(null) }
+    /** Offener Trinkgeldbetrag beim Öffnen der Auszahlung (Vorschlag im Betragsfeld). */
+    var tipOpen by remember { mutableStateOf(0L) }
     var includeCard by remember { mutableStateOf(true) }
     var message by remember { mutableStateOf<String?>(null) }
 
@@ -117,6 +119,14 @@ fun CashBookScreen(container: AppContainer, user: User) {
             listOf(BusinessCase.OPENING, BusinessCase.DEPOSIT, BusinessCase.PAYOUT, BusinessCase.PRIVATE_IN, BusinessCase.PRIVATE_OUT, BusinessCase.TRANSIT).forEach { bc ->
                 OutlinedButton(onClick = { movement = bc }) { Text(bc) }
             }
+            // Gesammeltes Trinkgeld der Mitarbeitenden bar auszahlen (eigener, TSE-gesicherter Vorgang)
+            var tipBalance by remember { mutableStateOf(0L) }
+            LaunchedEffect(refresh) { tipBalance = container.pos.tipBalance() }
+            if (tipBalance != 0L || container.settings.bool(Key.TIP_ENABLED)) {
+                OutlinedButton(onClick = { tipOpen = tipBalance; movement = BusinessCase.TIP_EMPLOYEE }) {
+                    Text("Trinkgeld auszahlen (offen ${Money.formatEur(tipBalance)})")
+                }
+            }
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { export(listOf("csv"), share = false) }) { Text("Kassenbuch speichern") }
@@ -154,7 +164,9 @@ fun CashBookScreen(container: AppContainer, user: User) {
 
     movement?.let { bc ->
         if (movementAmount == null) {
-            AmountDialog("$bc – Betrag", allowNegative = bc == BusinessCase.TRANSIT, onDismiss = { movement = null }) { cents ->
+            if (bc == BusinessCase.TIP_EMPLOYEE) AmountDialog("Trinkgeld auszahlen – Betrag", initialCents = tipOpen.coerceAtLeast(0), onDismiss = { movement = null }) { cents ->
+                movementAmount = kotlin.math.abs(cents)
+            } else AmountDialog("$bc – Betrag", allowNegative = bc == BusinessCase.TRANSIT, onDismiss = { movement = null }) { cents ->
                 // Auszahlung/Privatentnahme verlassen die Kasse; Geldtransit Vorzeichen frei wählbar
                 movementAmount = when (bc) {
                     BusinessCase.PAYOUT, BusinessCase.PRIVATE_OUT -> -kotlin.math.abs(cents)
@@ -163,12 +175,17 @@ fun CashBookScreen(container: AppContainer, user: User) {
                 }
             }
         } else {
-            TextInputDialog("$bc – Buchungstext", label = "z. B. Wechselgeld, Porto, Bankeinzahlung", onDismiss = { movement = null; movementAmount = null }) { text ->
+            val tip = bc == BusinessCase.TIP_EMPLOYEE
+            TextInputDialog(
+                if (tip) "Trinkgeld auszahlen – an wen?" else "$bc – Buchungstext",
+                label = if (tip) "Name der Mitarbeiterin / des Mitarbeiters (unterschreibt den Beleg)" else "z. B. Wechselgeld, Porto, Bankeinzahlung",
+                onDismiss = { movement = null; movementAmount = null },
+            ) { text ->
                 val amount = movementAmount!!
                 movement = null; movementAmount = null
                 scope.launch {
                     try {
-                        val r = container.pos.cashMovement(user, bc, amount, text)
+                        val r = if (tip) container.pos.tipPayout(user, amount, text) else container.pos.cashMovement(user, bc, amount, text)
                         if (container.printer.configured) runCatching {
                             container.printer.print(de.anypos.hardware.ReceiptDocument.toEscPos(
                                 de.anypos.hardware.ReceiptDocument.receipt(container.company(), r), container.printer.columns,

@@ -108,6 +108,13 @@ interface ReceiptDao {
     @Query("SELECT * FROM receipt WHERE closingId = :closingId ORDER BY number")
     suspend fun byClosing(closingId: Long): List<Receipt>
 
+    /** Saldo eines Geschäftsvorfalls über alle abgeschlossenen Belege (z. B. noch nicht ausgezahltes Trinkgeld). */
+    @Query(
+        "SELECT COALESCE(SUM(l.totalCents), 0) FROM receipt_line l JOIN receipt r ON r.id = l.receiptId " +
+            "WHERE l.businessCase = :businessCase AND r.state = 'FINISHED' AND r.training = 0",
+    )
+    suspend fun balanceOf(businessCase: String): Long
+
     @Query("SELECT * FROM receipt WHERE number IN (:numbers)")
     suspend fun byNumbers(numbers: List<Long>): List<Receipt>
 

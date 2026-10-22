@@ -51,6 +51,7 @@ class ExportService(
             revenue0 = settings[Key.ACC_REV_0], card = settings[Key.ACC_CARD], transit = settings[Key.ACC_TRANSIT],
             privateOut = settings[Key.ACC_PRIVATE_OUT], privateIn = settings[Key.ACC_PRIVATE_IN], deposit = settings[Key.ACC_DEPOSIT],
             payout = settings[Key.ACC_PAYOUT], difference = settings[Key.ACC_DIFFERENCE], voucher = settings[Key.ACC_VOUCHER],
+            tip = settings[Key.ACC_TIP],
         ),
         includeCardSales = includeCard,
     )

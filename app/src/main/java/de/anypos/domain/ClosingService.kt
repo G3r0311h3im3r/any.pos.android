@@ -11,7 +11,10 @@ import de.anypos.data.User
 import java.time.Instant
 import java.time.ZoneId
 
-data class ClosingReport(val closing: DailyClosing, val taxBuckets: List<TaxBucket>, val receipts: List<ReceiptWithDetails>)
+data class ClosingReport(val closing: DailyClosing, val taxBuckets: List<TaxBucket>, val receipts: List<ReceiptWithDetails>) {
+    /** Trinkgeld im Abschlusszeitraum (nicht gespeichert, aus den Belegen berechnet). */
+    val tips: TipTotals get() = TipTotals.of(receipts)
+}
 
 /** X-Bon (Zwischenstand) und Z-Bon (Tagesabschluss mit Kassensturz). */
 class ClosingService(

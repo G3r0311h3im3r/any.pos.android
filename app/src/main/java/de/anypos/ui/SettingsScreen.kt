@@ -126,6 +126,32 @@ fun SettingsScreen(container: AppContainer, user: User) {
         }
         HorizontalDivider()
 
+        Text("Kundendisplay", style = MaterialTheme.typography.titleMedium)
+        Text("Ein zweites Tablet oder Smartphone im selben WLAN zeigt dem Kunden Warenkorb, Summe, Rückgeld und die " +
+            "Trinkgeldabfrage – im Browser, ohne App. Das Display ersetzt nicht den Bon.", style = MaterialTheme.typography.bodySmall)
+        choice(Key.CUSTOMER_DISPLAY, listOf("false" to "aus", "true" to "ein"))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            field(Key.CUSTOMER_DISPLAY_PORT, "Port", 120); field(Key.CUSTOMER_DISPLAY_HOST, "Adresse für Displays (leer = automatisch)", 340)
+        }
+        CustomerDisplaySection(container, user) { message = it }
+        HorizontalDivider()
+
+        Text("Trinkgeld", style = MaterialTheme.typography.titleMedium)
+        choice(Key.TIP_ENABLED, listOf("false" to "keine Abfrage", "true" to "vor jeder Zahlung fragen"))
+        if (v(Key.TIP_ENABLED) == "true") {
+            Text("Trinkgeld geht an")
+            choice(Key.TIP_RECIPIENT, listOf("employee" to "Mitarbeitende (ohne USt, kein Umsatz)", "owner" to "Betrieb/Inhaber (Umsatz mit USt)"))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                field(Key.TIP_PERCENTS, "Prozentstufen (z. B. 5,10)", 220)
+                if (v(Key.TIP_RECIPIENT) == "owner") field(Key.TIP_OWNER_TAX_KEY, "USt-Schlüssel (1 = 19 %, 2 = 7 %)", 260)
+            }
+            choice(Key.TIP_ROUND_UP, listOf("true" to "„Aufrunden“ anbieten", "false" to "nicht aufrunden"))
+            Text("Abfrage bei Bar, Karte und Aufteilen, nur bei Verkäufen mit positivem Betrag. Trinkgeld für Mitarbeitende " +
+                "steht getrennt und ohne USt auf dem Bon; die Auszahlung erfolgt im Kassenbuch („Trinkgeld auszahlen“). " +
+                "Mit dem Steuerberater abstimmen (Konto unten, Verteilung, Lohnunterlagen).", style = MaterialTheme.typography.bodySmall)
+        }
+        HorizontalDivider()
+
         Text("DATEV / Steuerberater (Konten mit Steuerberater abstimmen; Vorschlag SKR03)", style = MaterialTheme.typography.titleMedium)
         Text("Alle Exporte funktionieren auch ohne E-Mail, Berater- und Mandantennummer. Fehlen die Nummern, ergänzt sie " +
             "der Steuerberater beim DATEV-Import. Das Konto für Kassendifferenzen wird erst gebraucht, wenn eine Differenz gebucht wurde.",
@@ -138,7 +164,7 @@ fun SettingsScreen(container: AppContainer, user: User) {
             field(Key.ACC_REV_0, "Erlöse 0 %", 140); field(Key.ACC_CARD, "Kartenzahlung", 140); field(Key.ACC_TRANSIT, "Geldtransit", 140)
             field(Key.ACC_PRIVATE_OUT, "Privatentnahme", 140); field(Key.ACC_PRIVATE_IN, "Privateinlage", 140)
             field(Key.ACC_DEPOSIT, "Einzahlung", 140); field(Key.ACC_PAYOUT, "Auszahlung", 140); field(Key.ACC_DIFFERENCE, "Kassendifferenz", 140)
-            field(Key.ACC_VOUCHER, "Mehrzweckgutscheine", 180)
+            field(Key.ACC_VOUCHER, "Mehrzweckgutscheine", 180); field(Key.ACC_TIP, "Trinkgeld Mitarbeiter", 180)
         }
         HorizontalDivider()
 

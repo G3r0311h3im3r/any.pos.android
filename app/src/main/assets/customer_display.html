@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b2a45">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Kundendisplay</title>
+<style>
+  :root { --bg:#0b2a45; --fg:#ffffff; --muted:#a9c0d6; --card:#123a5c; --accent:#2e7d32; --hl:#1d5585; --warn:#b71c1c; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--fg);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-user-select:none; user-select:none; }
+  body { display:flex; flex-direction:column; }
+  header { padding:14px 20px; font-size:clamp(18px,3.2vw,28px); font-weight:600; color:var(--muted);
+    border-bottom:1px solid rgba(255,255,255,.12); }
+  main { flex:1; display:flex; flex-direction:column; min-height:0; padding:12px 20px; }
+  .center { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; gap:16px; }
+  .big { font-size:clamp(40px,9vw,96px); font-weight:700; line-height:1.05; }
+  .mid { font-size:clamp(22px,4.5vw,42px); }
+  .muted { color:var(--muted); }
+  #lines { flex:1; overflow-y:auto; margin:0; padding:0; list-style:none; }
+  #lines li { display:flex; gap:12px; align-items:baseline; padding:10px 8px; border-bottom:1px solid rgba(255,255,255,.08);
+    font-size:clamp(17px,3vw,26px); }
+  #lines li.hl { background:var(--hl); border-radius:8px; }
+  #lines .q { min-width:3.2em; color:var(--muted); }
+  #lines .n { flex:1; overflow:hidden; text-overflow:ellipsis; }
+  #lines .d { display:block; font-size:.75em; color:var(--muted); }
+  #lines .t { font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .sum { display:flex; justify-content:space-between; align-items:baseline; padding:14px 8px 4px;
+    border-top:2px solid rgba(255,255,255,.3); font-size:clamp(30px,6.5vw,64px); font-weight:700; }
+  .opts { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)); gap:14px; width:100%; max-width:900px; }
+  .opts button { border:0; border-radius:16px; padding:22px 12px; background:var(--card); color:var(--fg);
+    font-size:clamp(22px,4vw,34px); font-weight:600; cursor:pointer; touch-action:manipulation; }
+  .opts button small { display:block; margin-top:6px; font-size:.6em; font-weight:400; color:var(--muted); }
+  .opts button.on { background:var(--accent); }
+  .opts button.on small { color:#dff0e0; }
+  .opts button:disabled { opacity:.55; }
+  .rows { font-size:clamp(20px,4vw,36px); display:grid; grid-template-columns:auto auto; gap:6px 28px; }
+  .rows div:nth-child(even) { text-align:right; font-variant-numeric:tabular-nums; }
+  .change { color:#9be7a0; font-weight:700; }
+  #offline { position:fixed; inset:auto 0 0 0; background:var(--warn); color:#fff; text-align:center; padding:10px;
+    font-size:18px; display:none; }
+</style>
+</head>
+<body>
+<header id="shop">&nbsp;</header>
+<main id="view"><div class="center"><div class="mid muted">Verbinde mit der Kasse …</div></div></main>
+<div id="offline">Verbindung zur Kasse unterbrochen – wird automatisch wiederhergestellt …</div>
+<script>
+(function () {
+  var base = location.pathname.replace(/\/+$/, "");
+  var view = document.getElementById("view");
+  var shop = document.getElementById("shop");
+  var offline = document.getElementById("offline");
+  var paidTimer = null, lastBeat = Date.now(), state = null;
+
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+
+  function idle(name) {
+    return '<div class="center"><div class="big">' + esc(name || "Willkommen") + '</div>' +
+      '<div class="mid muted">' + (name ? "Willkommen" : "") + '</div></div>';
+  }
+
+  function render(s) {
+    state = s;
+    shop.textContent = s.shop || " ";
+    if (paidTimer) { clearTimeout(paidTimer); paidTimer = null; }
+    if (s.mode === "cart") {
+      var html = '<ul id="lines">';
+      (s.lines || []).forEach(function (l) {
+        html += '<li class="' + (l.hl ? "hl" : "") + '"><span class="q">' + esc(l.qty || "") + '</span>' +
+          '<span class="n">' + esc(l.name) +
+          (l.unit ? '<span class="d">' + esc(l.unit) + (l.discount ? " · Rabatt " + esc(l.discount) : "") + '</span>' : "") +
+          '</span><span class="t">' + esc(l.total) + '</span></li>';
+      });
+      html += '</ul><div class="sum"><span>Summe</span><span>' + esc(s.total) + '</span></div>';
+      view.innerHTML = html;
+      var hl = view.querySelector("li.hl") || view.querySelector("li:last-child");
+      if (hl) hl.scrollIntoView({ block: "nearest" });
+    } else if (s.mode === "tip") {
+      var h = '<div class="center"><div class="mid">Möchten Sie ein Trinkgeld geben?</div>' +
+        '<div class="mid muted">Betrag ' + esc(s.total) + '</div><div class="opts">';
+      (s.options || []).forEach(function (o) {
+        h += '<button data-id="' + esc(o.id) + '" class="' + (s.chosen === o.id ? "on" : "") + '"' +
+          (s.chosen ? " disabled" : "") + '>' + esc(o.label) +
+          '<small>' + (o.amount ? esc(o.amount) + " · " : "") + "gesamt " + esc(o.total) + '</small></button>';
+      });
+      h += '</div><div class="mid muted">' + (s.chosen ? "Danke! Bitte einen Moment …" : "Bitte wählen") + '</div></div>';
+      view.innerHTML = h;
+      Array.prototype.forEach.call(view.querySelectorAll(".opts button"), function (b) {
+        b.addEventListener("click", function () { choose(s.ask, b.getAttribute("data-id")); });
+      });
+    } else if (s.mode === "paid") {
+      var r = '<div class="center"><div class="big">Vielen Dank!</div><div class="rows">' +
+        '<div>Summe</div><div>' + esc(s.total) + '</div>';
+      if (s.tip) r += '<div class="muted">darin Trinkgeld</div><div class="muted">' + esc(s.tip) + '</div>';
+      if (s.given) r += '<div>Gegeben</div><div>' + esc(s.given) + '</div>';
+      if (s.change) r += '<div class="change">Rückgeld</div><div class="change">' + esc(s.change) + '</div>';
+      r += '</div><div class="mid muted">Ihr Beleg kommt aus dem Drucker.</div></div>';
+      view.innerHTML = r;
+      paidTimer = setTimeout(function () { view.innerHTML = idle(s.shop); }, 15000);
+    } else {
+      view.innerHTML = idle(s.shop);
+    }
+  }
+
+  function choose(ask, id) {
+    Array.prototype.forEach.call(view.querySelectorAll(".opts button"), function (b) { b.disabled = true; });
+    var x = new XMLHttpRequest();
+    x.open("POST", base + "/tip");
+    x.setRequestHeader("Content-Type", "application/json");
+    x.onload = function () { if (x.status !== 204 && state) render(state); };
+    x.onerror = function () { if (state) render(state); };
+    x.send(JSON.stringify({ ask: ask, option: id }));
+  }
+
+  var es = null;
+  function connect() {
+    if (es) es.close();
+    lastBeat = Date.now();
+    es = new EventSource(base + "/events");
+    es.onopen = function () { offline.style.display = "none"; lastBeat = Date.now(); };
+    es.onmessage = function (e) { lastBeat = Date.now(); offline.style.display = "none"; render(JSON.parse(e.data)); };
+    es.addEventListener("ping", function () { lastBeat = Date.now(); offline.style.display = "none"; });
+    es.onerror = function () { offline.style.display = "block"; };
+  }
+  // Die Kasse meldet sich alle 15 s; bleibt das 40 s aus (z. B. WLAN still weg), neu verbinden
+  setInterval(function () {
+    if (Date.now() - lastBeat > 40000) { offline.style.display = "block"; connect(); }
+  }, 5000);
+  connect();
+})();
+</script>
+</body>
+</html>

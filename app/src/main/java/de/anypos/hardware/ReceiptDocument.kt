@@ -8,6 +8,7 @@ import de.anypos.data.ReceiptWithDetails
 import de.anypos.tse.EpsonTse
 import de.anypos.domain.Money
 import de.anypos.domain.TaxSummary
+import de.anypos.domain.TipTotals
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -58,6 +59,8 @@ object ReceiptDocument {
             val label = when {
                 l.businessCase == BusinessCase.SALE -> l.name
                 l.voucherCode != null -> "${BusinessCase.label(l.businessCase)} ${l.voucherCode}"
+                // Trinkgeld der Mitarbeitenden getrennt und ohne USt ausweisen (sonst schuldet der Betrieb USt darauf)
+                l.businessCase in BusinessCase.tips -> if (l.name == "Trinkgeld") BusinessCase.label(l.businessCase) else l.name
                 else -> "${l.businessCase}: ${l.name}"
             }
             val code = taxCode(l.dsfinvkKey)
@@ -141,7 +144,10 @@ object ReceiptDocument {
         ).joinToString(";")
     }
 
-    fun closing(company: Company, c: DailyClosing, final: Boolean, taxBuckets: List<de.anypos.domain.TaxBucket>): List<DocLine> = buildList {
+    fun closing(
+        company: Company, c: DailyClosing, final: Boolean, taxBuckets: List<de.anypos.domain.TaxBucket>,
+        tips: TipTotals = TipTotals(),
+    ): List<DocLine> = buildList {
         header(company)
         add(DocLine.Text(if (final) "Z-BON (Tagesabschluss)" else "X-BON (Zwischenbericht)", bold = true, center = true, big = true))
         if (final) add(DocLine.Row("Z-Nr.", c.number.toString()))
@@ -155,11 +161,19 @@ object ReceiptDocument {
         if (c.voucherRedemptionsCents != 0L) add(DocLine.Row("Gutscheineinlösung", Money.format(c.voucherRedemptionsCents)))
         for (b in taxBuckets) add(DocLine.Row("  ${taxCode(b.dsfinvkKey)} ${Money.formatPercent(b.percentBp)} brutto", Money.format(b.grossCents)))
         for (b in taxBuckets) add(DocLine.Row("  ${taxCode(b.dsfinvkKey)} Steuer", Money.format(b.taxCents)))
+        if (tips.ownerCents != 0L) add(DocLine.Row("Trinkgeld Betrieb (im Umsatz)", Money.format(tips.ownerCents)))
         add(DocLine.Row("Bar", Money.format(c.cashSalesCents)))
         add(DocLine.Row("Unbar", Money.format(c.cardSalesCents)))
+        if (tips.employeeCents != 0L || tips.employeePaidOutCents != 0L) {
+            add(DocLine.Separator)
+            add(DocLine.Text("Trinkgeld Mitarbeiter (kein Umsatz)", bold = true))
+            add(DocLine.Row("  erhalten", Money.format(tips.employeeCents)))
+            add(DocLine.Row("  davon unbar", Money.format(tips.employeeCardCents)))
+            add(DocLine.Row("  ausgezahlt", Money.format(tips.employeePaidOutCents)))
+        }
         add(DocLine.Separator)
         add(DocLine.Row("Anfangsbestand", Money.format(c.openingCashCents)))
-        add(DocLine.Row("+ Barumsatz", Money.format(c.cashSalesCents)))
+        add(DocLine.Row(if (tips.isEmpty) "+ Barumsatz" else "+ Bar (inkl. Trinkgeld)", Money.format(c.cashSalesCents)))
         add(DocLine.Row("+/- Ein-/Auszahlungen", Money.format(c.cashMovementsCents)))
         add(DocLine.Row("= Soll-Bestand", Money.format(c.expectedCashCents), bold = true))
         if (final) {

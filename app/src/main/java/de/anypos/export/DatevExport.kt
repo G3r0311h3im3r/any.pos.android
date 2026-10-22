@@ -26,6 +26,8 @@ data class DatevAccounts(
     val difference: String,
     /** Verbindlichkeit aus ausgegebenen Mehrzweckgutscheinen; nur nötig, wenn solche verkauft/eingelöst werden. */
     val voucher: String = "",
+    /** Trinkgeld der Mitarbeitenden (Verbindlichkeit bis zur Auszahlung); nur nötig, wenn Trinkgeld gebucht wird. */
+    val tip: String = "",
 )
 
 data class DatevConfig(
@@ -113,13 +115,22 @@ object DatevExport {
         if (a.voucher.isBlank() && valid.any { r -> r.lines.any { it.businessCase in multiVoucher } }) {
             throw IllegalStateException("Konto für Mehrzweckgutscheine fehlt (Einstellungen → DATEV)")
         }
+        if (a.tip.isBlank() && valid.any { r -> r.lines.any { it.businessCase == BusinessCase.TIP_EMPLOYEE } }) {
+            throw IllegalStateException("Konto für Trinkgeld Mitarbeiter fehlt (Einstellungen → DATEV)")
+        }
         val salesByDay = valid.filter { r -> r.lines.any { it.businessCase !in BusinessCase.cashMovements } }.groupBy { dateOf(it) }
         for ((date, list) in salesByDay.toSortedMap()) {
             val cashBy = LinkedHashMap<Pair<String, String>, Long>()
             val cardBy = LinkedHashMap<Pair<String, String>, Long>()
             for (r in list) {
                 val sales = r.lines.filter { it.businessCase !in BusinessCase.cashMovements }
-                    .groupBy { if (it.businessCase in multiVoucher) a.voucher to "Mehrzweckgutscheine" else revenueAccount(it.dsfinvkKey, a) to label(it.dsfinvkKey) }
+                    .groupBy {
+                        when (it.businessCase) {
+                            in multiVoucher -> a.voucher to "Mehrzweckgutscheine"
+                            BusinessCase.TIP_EMPLOYEE -> a.tip to "Trinkgeld Mitarbeiter"
+                            else -> revenueAccount(it.dsfinvkKey, a) to label(it.dsfinvkKey)
+                        }
+                    }
                     .mapValues { (_, l) -> l.sumOf { it.totalCents } }
                 val cash = r.payments.filter { it.type == PaymentType.CASH }.sumOf { it.amountCents }
                 val card = r.payments.filter { it.type != PaymentType.CASH }.sumOf { it.amountCents }

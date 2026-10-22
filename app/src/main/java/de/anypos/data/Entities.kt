@@ -133,19 +133,26 @@ object BusinessCase {
     const val SINGLE_VOUCHER_REDEEM = "EinzweckgutscheinEinloesung"
     const val MULTI_VOUCHER_SALE = "MehrzweckgutscheinKauf"
     const val MULTI_VOUCHER_REDEEM = "MehrzweckgutscheinEinloesung"
+    /** Trinkgeld für Mitarbeitende: steuerfrei, kein Umsatz des Betriebs (USt-Schlüssel 5); auch die Auszahlung. */
+    const val TIP_EMPLOYEE = "TrinkgeldAN"
+    /** Trinkgeld an den Betrieb/Inhaber: Umsatz, umsatzsteuerpflichtig. */
+    const val TIP_OWNER = "TrinkgeldAG"
 
     val cashMovements = listOf(OPENING, DEPOSIT, PAYOUT, PRIVATE_IN, PRIVATE_OUT, TRANSIT, DIFFERENCE)
     val voucherSales = listOf(SINGLE_VOUCHER_SALE, MULTI_VOUCHER_SALE)
     val voucherRedemptions = listOf(SINGLE_VOUCHER_REDEEM, MULTI_VOUCHER_REDEEM)
+    val tips = listOf(TIP_EMPLOYEE, TIP_OWNER)
 
     /** Umsatzsteuerlich relevante Umsätze (Einzweckgutscheine werden bei Ausgabe versteuert). */
-    val taxable = listOf(SALE, SINGLE_VOUCHER_SALE, SINGLE_VOUCHER_REDEEM)
+    val taxable = listOf(SALE, SINGLE_VOUCHER_SALE, SINGLE_VOUCHER_REDEEM, TIP_OWNER)
 
     fun label(businessCase: String) = when (businessCase) {
         SINGLE_VOUCHER_SALE -> "Gutscheinverkauf (Einzweck)"
         SINGLE_VOUCHER_REDEEM -> "Gutscheineinlösung (Einzweck)"
         MULTI_VOUCHER_SALE -> "Gutscheinverkauf (Mehrzweck)"
         MULTI_VOUCHER_REDEEM -> "Gutscheineinlösung (Mehrzweck)"
+        TIP_EMPLOYEE -> "Trinkgeld (Mitarbeiter, ohne USt)"
+        TIP_OWNER -> "Trinkgeld"
         else -> businessCase
     }
 }

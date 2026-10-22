@@ -34,6 +34,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -57,6 +58,7 @@ import de.anypos.AppContainer
 import de.anypos.data.Article
 import de.anypos.data.User
 import de.anypos.domain.CartLine
+import de.anypos.domain.Key as SettingKey
 import de.anypos.domain.Money
 
 @Composable
@@ -159,24 +161,43 @@ fun PosScreen(container: AppContainer, user: User) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 8.dp)) {
                     OutlinedButton(onClick = { voucherSale = true }, enabled = !vm.busy) { Text("Gutschein verkaufen") }
                     OutlinedButton(onClick = { voucherRedeem = true }, enabled = !vm.cart.isEmpty && !vm.busy) { Text("Gutschein einlösen") }
-                    OutlinedButton(onClick = { splitDialog = true }, enabled = vm.cart.totalCents > 0 && !vm.busy) { Text("Aufteilen") }
+                    OutlinedButton(onClick = { if (!vm.requestPayment(PayKind.SPLIT)) splitDialog = true }, enabled = vm.cart.totalCents > 0 && !vm.busy) { Text("Aufteilen") }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { confirmAbort = true }, enabled = vm.openReceipt != null && !vm.busy, modifier = Modifier.height(64.dp)) { Text("Abbruch") }
                     Button(
-                        onClick = { vm.payCard() }, enabled = !vm.cart.isEmpty && !vm.busy,
+                        onClick = { if (!vm.requestPayment(PayKind.CARD)) vm.payCard() }, enabled = !vm.cart.isEmpty && !vm.busy,
                         modifier = Modifier.weight(1f).height(64.dp),
                     ) { Text("Karte", fontSize = 20.sp) }
                     // Vollständig durch Gutschein gedeckt: nichts zu kassieren, direkt abschließen
                     val nothingToPay = !vm.cart.isEmpty && vm.cart.totalCents == 0L
                     Button(
-                        onClick = { if (nothingToPay) vm.payCash(0) else payDialog = true }, enabled = !vm.cart.isEmpty && !vm.busy,
+                        onClick = { if (nothingToPay) vm.payCash(0) else if (!vm.requestPayment(PayKind.CASH)) payDialog = true }, enabled = !vm.cart.isEmpty && !vm.busy,
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
                         modifier = Modifier.weight(1.4f).height(64.dp),
                     ) { Text(if (nothingToPay) "Abschließen" else "Bar", fontSize = 20.sp) }
                 }
             }
         }
+    }
+
+    // Nach der Trinkgeldabfrage mit der ursprünglich gewählten Zahlung weitermachen
+    LaunchedEffect(vm.continuePayment) {
+        when (vm.continuePayment) {
+            PayKind.CASH -> payDialog = true
+            PayKind.CARD -> vm.payCard()
+            PayKind.SPLIT -> splitDialog = true
+            null -> return@LaunchedEffect
+        }
+        vm.continuePayment = null
+    }
+    vm.tipRequest?.let { request ->
+        TipDialog(
+            request, vm.tipCustomerChoice,
+            displayActive = container.settings.bool(SettingKey.CUSTOMER_DISPLAY),
+            employeeTip = container.settings[SettingKey.TIP_RECIPIENT] != "owner",
+            onApply = { vm.applyTip(it) }, onDismiss = { vm.cancelTip() },
+        )
     }
 
     if (voucherSale) {

@@ -52,6 +52,16 @@ enum class Key(val default: String) {
     ACC_PAYOUT("4900"),
     ACC_DIFFERENCE(""),            // mit Steuerberater festzulegen
     ACC_VOUCHER(""),               // Mehrzweckgutscheine, mit Steuerberater festzulegen
+    ACC_TIP(""),                   // Trinkgeld Mitarbeiter (Verbindlichkeit), mit Steuerberater festzulegen
+    TIP_ENABLED("false"),          // Trinkgeldabfrage vor der Zahlung
+    TIP_RECIPIENT("employee"),     // employee (TrinkgeldAN, ohne USt) | owner (TrinkgeldAG, Umsatz)
+    TIP_PERCENTS("5,10"),          // Prozentstufen der Abfrage
+    TIP_ROUND_UP("true"),          // „Aufrunden auf volle Euro“ als weitere Stufe
+    TIP_OWNER_TAX_KEY("1"),        // USt-Schlüssel für Trinkgeld an den Betrieb (1 = 19 %), mit Steuerberater abstimmen
+    CUSTOMER_DISPLAY("false"),     // Kundendisplay (Webseite im WLAN)
+    CUSTOMER_DISPLAY_PORT("8090"),
+    CUSTOMER_DISPLAY_TOKEN(""),    // zufälliger Schlüssel in der Adresse; neu erzeugen sperrt alle Displays aus
+    CUSTOMER_DISPLAY_HOST(""),     // Adresse für Displays; leer = IP des Geräts
 
     BACKUP_TREE_URI(""),           // Zielordner der automatischen Sicherung (SAF)
     BACKUP_SECRET(""),             // Sicherungspasswort, mit Android-Keystore verschlüsselt

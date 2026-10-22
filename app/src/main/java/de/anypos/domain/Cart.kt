@@ -75,6 +75,28 @@ data class Cart(val lines: List<CartLine> = emptyList(), private val nextKey: Lo
         return copy(lines = lines + line, nextKey = nextKey + 1)
     }
 
+    /** Trinkgeld im Warenkorb (höchstens eine Zeile). */
+    val tipCents: Long get() = lines.filter { it.businessCase in BusinessCase.tips }.sumOf { it.totalCents }
+
+    /** Zu zahlender Betrag ohne Trinkgeld – Grundlage der Trinkgeldstufen. */
+    val totalWithoutTipCents: Long get() = totalCents - tipCents
+
+    /**
+     * Setzt das Trinkgeld als eigene, nicht bearbeitbare Position am Ende ([businessCase] TrinkgeldAN/AG);
+     * 0 entfernt es. Ein bestehendes Trinkgeld wird ersetzt.
+     */
+    fun withTip(cents: Long, businessCase: String, taxRate: TaxRate): Cart {
+        require(businessCase in BusinessCase.tips)
+        require(cents >= 0) { "Trinkgeld darf nicht negativ sein" }
+        val rest = lines.filterNot { it.businessCase in BusinessCase.tips }
+        if (cents == 0L) return copy(lines = rest)
+        require(rest.isNotEmpty() && totalWithoutTipCents > 0) { "Trinkgeld nur bei einem Verkauf mit positivem Betrag" }
+        val line = CartLine(nextKey, null, "", "Trinkgeld", 1000, cents, 0, taxRate, businessCase)
+        return copy(lines = rest + line, nextKey = nextKey + 1)
+    }
+
+    fun withoutTip(): Cart = if (tipCents == 0L) this else copy(lines = lines.filterNot { it.businessCase in BusinessCase.tips })
+
     fun setQuantity(key: Long, quantityMilli: Long): Cart =
         if (quantityMilli == 0L) remove(key)
         else edit(key) { it.copy(quantityMilli = quantityMilli, discountCents = it.discountCents.coerceAtMost(Money.lineTotal(it.unitPriceCents, quantityMilli).coerceAtLeast(0))) }

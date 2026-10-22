@@ -10,6 +10,9 @@ import de.anypos.data.Role
 import de.anypos.data.User
 import de.anypos.domain.AuditLog
 import de.anypos.domain.ClosingService
+import de.anypos.domain.CustomerDisplayHub
+import de.anypos.domain.DisplayState
+import de.anypos.display.DisplayServer
 import de.anypos.domain.Key
 import de.anypos.domain.PinHasher
 import de.anypos.domain.PosService
@@ -32,6 +35,8 @@ import de.anypos.tse.UsbByteLink
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
@@ -151,6 +156,48 @@ class AppContainer(context: Context, private val restoredFrom: String? = null) {
     }
 
     val pos = PosService(db, ::tse, settings, audit, scope = scope)
+
+    /** Zustand für Kundendisplays; die Kasse veröffentlicht, der [DisplayServer] verteilt. */
+    val customerDisplay = CustomerDisplayHub()
+    private var displayServer: DisplayServer? = null
+
+    /** Fehler beim Start des Display-Servers (z. B. Port belegt), für die Einstellungen. */
+    @Volatile var displayError: String? = null
+        private set
+
+    private val displayPage by lazy { appContext.assets.open("customer_display.html").use { it.readBytes().toString(Charsets.UTF_8) } }
+
+    /** Adresse für Displays: eigener Eintrag oder die IP des Geräts im WLAN; null = aus oder ohne Netz. */
+    fun customerDisplayUrl(): String? {
+        if (!settings.bool(Key.CUSTOMER_DISPLAY)) return null
+        val token = settings[Key.CUSTOMER_DISPLAY_TOKEN].ifBlank { return null }
+        val host = settings[Key.CUSTOMER_DISPLAY_HOST].ifBlank { DisplayServer.localAddresses().firstOrNull() ?: return null }
+        return "http://$host:${settings[Key.CUSTOMER_DISPLAY_PORT]}/d/$token"
+    }
+
+    /** Startet/stoppt den Display-Server passend zu den Einstellungen (Ein/Aus, Port, Schlüssel). */
+    private fun watchCustomerDisplay() = scope.launch {
+        settings.values.map { listOf(it[Key.CUSTOMER_DISPLAY.name], it[Key.CUSTOMER_DISPLAY_PORT.name], it[Key.CUSTOMER_DISPLAY_TOKEN.name]) }
+            .distinctUntilChanged().collect {
+                displayServer?.close()
+                displayServer = null
+                displayError = null
+                if (!settings.bool(Key.CUSTOMER_DISPLAY)) return@collect
+                val token = settings[Key.CUSTOMER_DISPLAY_TOKEN]
+                if (token.isBlank()) {
+                    settings.put(Key.CUSTOMER_DISPLAY_TOKEN, DisplayServer.newToken()) // löst erneuten Durchlauf aus
+                    return@collect
+                }
+                if (customerDisplay.state.value is DisplayState.Idle) customerDisplay.publish(DisplayState.Idle(settings[Key.COMPANY_NAME]))
+                displayServer = try {
+                    DisplayServer(customerDisplay, token, settings.int(Key.CUSTOMER_DISPLAY_PORT), { displayPage }).start()
+                } catch (e: Exception) {
+                    displayError = "Kundendisplay konnte nicht starten: ${e.message}"
+                    audit.log("System", "KUNDENDISPLAY_FEHLER", e.message.orEmpty())
+                    null
+                }
+            }
+    }
     val closing = ClosingService(db, pos, audit)
     val exports = ExportService(context.applicationContext, db, pos, settings, audit, ::company)
 
@@ -176,6 +223,7 @@ class AppContainer(context: Context, private val restoredFrom: String? = null) {
         settings.load() // stellt sicher, dass Einstellungen vor dem ersten Vorgang geladen sind
         restoredFrom?.let { audit.log("System", "WIEDERHERSTELLUNG", "Sicherung übernommen, bisherige Datenbank aufbewahrt als $it") }
         pos.recoverOpenReceipts()
+        watchCustomerDisplay()
         // Abgleich mit der TSE im Hintergrund (Netzwerk), damit der Start der App nicht wartet
         scope.launch { pos.reconcile() }
     }

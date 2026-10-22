@@ -76,7 +76,7 @@ fun ClosingScreen(container: AppContainer, user: User) {
         }
     }
 
-    fun doc(report: ClosingReport, final: Boolean) = ReceiptDocument.closing(container.company(), report.closing, final, report.taxBuckets)
+    fun doc(report: ClosingReport, final: Boolean) = ReceiptDocument.closing(container.company(), report.closing, final, report.taxBuckets, report.tips)
 
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         ScreenTitle("Tagesabschluss")
@@ -115,7 +115,7 @@ fun ClosingScreen(container: AppContainer, user: User) {
                             val receipts = container.db.receipts().byClosing(c.id).map { container.pos.load(it.id) }
                             val sales = receipts.filter { it.receipt.state == de.anypos.data.ReceiptState.FINISHED }
                                 .flatMap { it.lines }.filter { it.businessCase in de.anypos.data.BusinessCase.taxable }
-                            preview = ReceiptDocument.closing(container.company(), c, true, TaxSummary.of(sales)) to true
+                            preview = ReceiptDocument.closing(container.company(), c, true, TaxSummary.of(sales), de.anypos.domain.TipTotals.of(receipts)) to true
                         }
                     }) { Text("Anzeigen") }
                 }

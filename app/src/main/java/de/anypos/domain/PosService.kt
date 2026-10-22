@@ -257,6 +257,28 @@ class PosService(
         return finish(open, ReceiptType.SALE, ReceiptState.FINISHED, listOf(line), listOf(pay))
     }
 
+    /** Noch nicht ausgezahltes Trinkgeld der Mitarbeitenden (erhalten minus ausgezahlt). */
+    suspend fun tipBalance(): Long = receipts.balanceOf(BusinessCase.TIP_EMPLOYEE)
+
+    /**
+     * Auszahlung gesammelter Trinkgelder an Mitarbeitende aus der Kasse: eigener Vorgang mit Geschäftsvorfall
+     * „TrinkgeldAN“ (negativ, USt-Schlüssel 5), mit TSE abgesichert (Praxishilfe HWK, DSFinV-K).
+     */
+    suspend fun tipPayout(user: User, amountCents: Long, recipient: String): ReceiptWithDetails {
+        if (amountCents <= 0) throw PosException("Betrag muss größer als 0 sein")
+        val open = open(user)
+        val tax = db.masterData().taxRatesOnce().first { it.dsfinvkKey == 5 }
+        val text = "Trinkgeld-Auszahlung" + recipient.trim().takeIf { it.isNotEmpty() }?.let { " an $it" }.orEmpty()
+        val line = ReceiptLine(
+            receiptId = open.id, position = 1, articleId = null, sku = "", name = text,
+            quantityMilli = 1000, unitPriceCents = -amountCents, discountCents = 0, totalCents = -amountCents,
+            taxRateId = tax.id, taxPercentBp = 0, dsfinvkKey = 5, businessCase = BusinessCase.TIP_EMPLOYEE,
+        )
+        val pay = Payment(receiptId = open.id, type = PaymentType.CASH, label = "Bar", amountCents = -amountCents)
+        audit.log(user.name, "TRINKGELD_AUSZAHLUNG", "${Money.format(amountCents)} $text")
+        return finish(open, ReceiptType.SALE, ReceiptState.FINISHED, listOf(line), listOf(pay))
+    }
+
     /** Nach Absturz/Neustart offene Vorgänge als Abbruch abschließen, damit keine TSE-Transaktion offen bleibt. */
     suspend fun recoverOpenReceipts() {
         for (r in receipts.openReceipts()) {
