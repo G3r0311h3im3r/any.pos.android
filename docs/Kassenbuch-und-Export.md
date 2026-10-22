@@ -34,6 +34,19 @@ Für die DSFinV-K sind dagegen die Unternehmensdaten Pflicht (Name, Anschrift, S
 Der DSFinV-K-Export (*Abschluss*) kann ebenfalls gespeichert oder geteilt werden. Zusätzlich legt der
 **automatische Monatsexport** alle drei Dateien je Monat im Sicherungsordner ab (siehe Datensicherung.md).
 
+### TSE-Export (TAR)
+
+Bei einer Kassen-Nachschau oder Außenprüfung wird neben der DSFinV-K der **TSE-Export** verlangt: die signierten
+Protokolldaten der TSE als TAR-Datei. *Einstellungen → TSE → TSE-Daten exportieren …*
+
+- Umfang: gesamter Speicher der TSE oder ein Monat; enthält die Daten aller Kassen, die die TSE genutzt haben
+  (auch JTL-POS aus der Zeit vor dem Umzug).
+- Braucht die **Admin-PIN der TSE** (wird nicht gespeichert) und die Freigabe des Betreibers; daher kein
+  automatischer Monatsexport.
+- Während des Exports ist die TSE für alle Kassen gesperrt – außerhalb der Öffnungszeiten ausführen.
+- Es werden keine Daten auf der TSE gelöscht. Größe und SHA-256-Prüfsumme der Datei stehen im Protokoll und
+  werden angezeigt; damit lässt sich später nachweisen, dass die Datei unverändert ist.
+
 > Hinweis Kioskmodus: In der vollen Sperre (Geräteeigentümer) können andere Apps nicht geöffnet werden.
 > Teilen dann über den Monatsexport/Sicherungsordner oder Kioskmodus kurz ausschalten.
 

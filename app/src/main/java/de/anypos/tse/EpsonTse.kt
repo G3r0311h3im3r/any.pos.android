@@ -1,14 +1,18 @@
 package de.anypos.tse
 
 import de.anypos.tse.EpsonJson.string
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.longOrNull
+import java.io.OutputStream
 import java.security.MessageDigest
 import java.time.Instant
 import java.time.temporal.ChronoUnit
@@ -144,6 +148,75 @@ class EpsonTse(
             } finally {
                 runCatching { call("LogOutForAdmin") }
             }
+        }
+    }
+
+    /** Ergebnis eines TSE-Exports: Größe und SHA-256 der geschriebenen TAR-Datei (für Protokoll und Nachweis). */
+    data class TarExportResult(val bytes: Long, val sha256: String, val function: String)
+
+    /**
+     * TSE-Export (TAR nach BSI TR-03151) direkt in [out] – Daten **aller** Clients, also inkl. früherer Kassen,
+     * wie für eine Prüfung nötig. [from]/[to] = Zeitraum (`ExportFilteredByPeriodOfTime`), sonst gesamter Speicher
+     * (`ArchiveExport`).
+     *
+     * - Verlangt Admin-Anmeldung und eine gesetzte Zeit (Spez. S. 45) – die Zeit wird vorher sichergestellt.
+     * - Während des Exports nimmt die TSE nichts anderes an, auch nicht von anderen Kassen am Drucker.
+     * - Es werden **nie** Daten gelöscht (`FinalizeExport{deleteData:false}`).
+     * - Bei jedem Fehler wird der Exportmodus mit `CancelExport` beendet, damit die TSE nicht blockiert bleibt.
+     */
+    suspend fun exportTar(
+        adminPin: String,
+        out: OutputStream,
+        from: Instant? = null,
+        to: Instant? = null,
+        progress: (Long) -> Unit = {},
+    ): TarExportResult {
+        ensureReady()
+        return asAdmin(adminPin) { runExport(out, from, to, progress) }
+    }
+
+    private suspend fun runExport(out: OutputStream, from: Instant?, to: Instant?, progress: (Long) -> Unit): TarExportResult {
+        val function = if (from == null) "ArchiveExport" else "ExportFilteredByPeriodOfTime"
+        val input = buildMap<String, Any?> {
+            put("clientId", "")
+            if (from != null) {
+                put("startDate", from.truncatedTo(ChronoUnit.SECONDS).toString())
+                put("endDate", (to ?: Instant.ofEpochMilli(clock())).truncatedTo(ChronoUnit.SECONDS).toString())
+            }
+        }
+        call(function, input)
+        var finalized = false
+        try {
+            val digest = MessageDigest.getInstance("SHA-256")
+            var total = 0L
+            var searching = 0
+            while (true) {
+                val chunk = call("GetExportData", timeoutMs = TseTransport.LONG_TIMEOUT_MS)
+                val data = chunk.string("exportData").orEmpty()
+                if (data.isNotEmpty()) {
+                    val bytes = Base64.getDecoder().decode(data)
+                    withContext(Dispatchers.IO) { out.write(bytes) }
+                    digest.update(bytes)
+                    total += bytes.size
+                    progress(total)
+                }
+                when (val status = chunk.string("exportStatus")) {
+                    "EXPORT_COMPLETE" -> break
+                    "EXPORT_INCOMPLETE" -> searching = 0
+                    "EXPORT_INCOMPLETE_SEARCHING" -> {
+                        // TSE sucht die Daten noch zusammen (Spez. S. 51) – kurz warten, aber nicht endlos
+                        if (++searching > MAX_SEARCH_POLLS) throw TseException("TSE-Export: Suche dauert zu lange")
+                        delay(SEARCH_POLL_MS)
+                    }
+                    else -> throw TseException("TSE-Export: unbekannter Status „$status“")
+                }
+            }
+            withContext(Dispatchers.IO) { out.flush() }
+            call("FinalizeExport", mapOf("deleteData" to false))
+            finalized = true
+            return TarExportResult(total, digest.digest().joinToString("") { "%02x".format(it) }, function)
+        } finally {
+            if (!finalized) runCatching { call("CancelExport") }
         }
     }
 
@@ -461,6 +534,8 @@ class EpsonTse(
         fun isMockSerial(serialHex: String?): Boolean = serialHex?.uppercase()?.startsWith(MOCK_SERIAL_PREFIX) == true
 
         const val ADMIN_USER = "Administrator"
+        private const val SEARCH_POLL_MS = 500L
+        private const val MAX_SEARCH_POLLS = 600 // 5 Minuten
 
         /**
          * Client-ID nach JSON-Spezifikation (S. 16): ASN.1-PrintableString (A–Z, a–z, 0–9, Leerzeichen und ' ( ) + , - . / : = ?),

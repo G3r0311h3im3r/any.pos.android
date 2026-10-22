@@ -54,6 +54,7 @@ fun TseEpsonSection(container: AppContainer, user: User, onMessage: (String) -> 
     var askPin by remember { mutableStateOf(false) }
     var askSecret by remember { mutableStateOf(false) }
     var takeover by remember { mutableStateOf(false) }
+    var tarExport by remember { mutableStateOf(false) }
 
     /** Läuft im Hintergrund; Fehler landen als Meldung, nie als Absturz. */
     fun run(block: suspend () -> Unit) = scope.launch {
@@ -125,6 +126,7 @@ fun TseEpsonSection(container: AppContainer, user: User, onMessage: (String) -> 
                 }
             }) { Text("Anmeldung testen") }
             OutlinedButton(enabled = epson && !busy, onClick = { takeover = true }) { Text("TSE übernehmen …") }
+            OutlinedButton(enabled = epson && !busy, onClick = { tarExport = true }) { Text("TSE-Daten exportieren …") }
         }
         Text(
             (if (!writeOn) "„Anmeldung testen“ braucht Schreibzugriff (Anmelden und Zeit setzen sind schreibende TSE-Befehle). " else "") +
@@ -158,6 +160,7 @@ fun TseEpsonSection(container: AppContainer, user: User, onMessage: (String) -> 
     }
 
     if (takeover) TseTakeoverDialog(container, user) { takeover = false }
+    if (tarExport) TseExportDialog(container, user) { tarExport = false }
 
     if (askPin) TextInputDialog("TimeAdmin-PIN der TSE", label = "PIN", numeric = true, password = true, onDismiss = { askPin = false }) { pin ->
         askPin = false
