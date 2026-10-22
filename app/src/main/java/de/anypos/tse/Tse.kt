@@ -49,7 +49,7 @@ data class TseFinish(
 )
 
 /** TSE nicht erreichbar oder Fehler. Der Vorgang wird trotzdem aufgezeichnet und als Ausfall gekennzeichnet. */
-class TseException(message: String, cause: Throwable? = null) : Exception(message, cause)
+open class TseException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 /** Kein TSE-Modul konfiguriert. Für Produktivbetrieb unzulässig – die App zeigt das dauerhaft an. */
 class NoTse : Tse {
