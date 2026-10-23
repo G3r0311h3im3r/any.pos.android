@@ -32,6 +32,21 @@ freigegeben, damit JTL-POS nicht blockiert wird.
 Aufwand Software (geschätzt): 2a ca. 0,5 Tag, 2c–2e ca. 2–4 Tage, sobald Drucker, TSE, Epson ePOS SDK und
 Dokumentation vorliegen. Der größte Zeitanteil ist der Test an der echten Hardware.
 
+## Produktiv-TSE vor Ort (Ist-Zustand)
+
+| Angabe | Wert | Quelle / Stand |
+|---|---|---|
+| Drucker (TSE-Host) | Epson TM-m30III, per USB-C am Tablet (lädt das Tablet über PD) | Betreiber, 22.10.2026 |
+| TSE | USB-TSE, steckt im Drucker | Betreiber, 22.10.2026 |
+| Seriennummer (Base64, wie auf JTL-Bons) | `1Vo1kLVg5n2Kbj473mBn6PulvdxCXVsgasrLkYOlCE4=` | **vom Foto eines JTL-Bons abgelesen, noch zu bestätigen** (1/l/I und O/0 auf dem Foto nicht sicher unterscheidbar) |
+| Seriennummer (Hex, wie Any.POS sie anzeigt) | `D55A3590B560E67D8A6E3E3BDE6067E8FBA5BDDC425D5B206ACACB9183A5084E` | daraus umgerechnet (32 Bytes), ebenfalls zu bestätigen |
+| Zertifikatsablauf, Signaturzähler, Speicher, offene Transaktionen | – | folgt aus dem Lesetest (Schritt 9, `GetStorageInfo`) |
+
+Bestätigung der Seriennummer: in JTL-POS unter *TSE-Info* bzw. beim Lesetest (Anzeige „serialNumber (hex)“).
+
+Hinweis vom selben Bon („TSE Fehlerbehebungsbeleg“): JTL-POS hatte am 22.10.2026 von 11:01 bis 13:29 keine
+Verbindung zur TSE (betroffen: Bon R-0086). Der Ausfall gehört zur Dokumentation des Betreibers für JTL-POS.
+
 ## Regeln
 
 1. Vor jedem schreibenden TSE-Aufruf liegt eine schriftliche Freigabe des Betreibers vor.

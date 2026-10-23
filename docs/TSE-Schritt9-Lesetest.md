@@ -46,7 +46,7 @@ Das Formular auf der letzten Seite ausfüllen und unterschreiben lassen. Ohne Un
 | USB-C-Kabel Drucker ↔ Tablet | das Kabel, über das das JTL-Tablet heute lädt und druckt |
 | PC mit Projekt Any.POS und `adb` | im selben WLAN wie das Tablet |
 | Diese Anleitung, Stift | Ergebnisse in Teil E eintragen |
-| Seriennummer der TSE laut JTL-POS | aus JTL-POS → TSE-Info oder von einem JTL-Bon (zum Vergleich) |
+| Seriennummer der TSE laut JTL-POS | vom JTL-Bon abgelesen (noch zu bestätigen): `1Vo1kLVg5n2Kbj473mBn6PulvdxCXVsgasrLkYOlCE4=`, in Any.POS als Hex `D55A3590…183A5084E` |
 
 ### ☐ 4. Tablet mit dem PC verbinden (WLAN-Debugging)
 
@@ -190,7 +190,8 @@ Zertifikat) bzw. das Epson ePOS SDK. Beides wird erst nach Rücksprache und mit 
 
 Ich erlaube einen **rein lesenden** Zugriff der Kassensoftware Any.POS auf die TSE in meinem Bondrucker.
 
-- Drucker: Epson TM-m30III  Seriennummer der TSE: ________________________________
+- Drucker: Epson TM-m30III
+- Seriennummer der TSE (lt. JTL-Bon): 1Vo1kLVg5n2Kbj473mBn6PulvdxCXVsgasrLkYOlCE4=  ☐ geprüft
 - Zeitraum: am ______________ von ________ bis ________ Uhr (außerhalb der Öffnungszeiten)
 - Es werden nur die TSE-Angaben und die Liste offener Transaktionen gelesen. Es werden **keine** Daten
   geschrieben, **keine** PINs verwendet, **keine** Belege erzeugt und **nichts** gelöscht.
