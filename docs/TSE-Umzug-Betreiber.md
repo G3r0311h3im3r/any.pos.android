@@ -14,6 +14,8 @@ was erledigt ist.
 - Den Chip **niemals zurücksetzen, neu einrichten oder Daten darauf löschen**. Sonst gehen Daten verloren,
   die Sie 10 Jahre aufbewahren müssen.
 - **PINs nie raten.** Nach drei falschen Versuchen sperrt sich der Chip.
+- **JTL-POS bleibt bis zum Schluss installiert.** Erst wenn der erste Bon mit Any.POS stimmt, wird JTL-POS
+  vom Chip abgemeldet. Klappt etwas nicht, kassieren Sie einfach mit JTL-POS weiter.
 - Planen Sie für den Umzugstag etwa **1–2 Stunden außerhalb der Öffnungszeiten** ein.
 
 ---
@@ -72,6 +74,8 @@ Das Tablet hat meist nur **eine** Buchse. Es muss über dieselbe Verbindung **la
 2. Any.POS öffnen, **Admin** antippen, PIN **1234** eingeben, **Anmelden**.
 3. Sofort die PIN ändern: **Einstellungen** → ganz unten bei *Benutzer* → **PIN ändern**.
 
+JTL-POS bleibt installiert und wird bis zum Umzugstag ganz normal weiter benutzt.
+
 ### ☐ 4. Any.POS vorbereiten (geht ohne Drucker und ohne Chip)
 
 In **Einstellungen**:
@@ -82,68 +86,30 @@ In **Einstellungen**:
   Das Passwort gut aufbewahren – ohne Passwort lässt sich eine Sicherung nicht zurückholen.
 - **TSE:** vorerst auf **keine TSE** lassen.
 
-### ☐ 5. Artikel aus JTL übernehmen
+### ☐ 5. Artikel in Any.POS anlegen
 
-Ihre Artikel (Name, Preis, Steuersatz, Barcode, Warengruppe) holen Sie aus JTL und spielen sie in Any.POS ein.
-**Bisherige Verkäufe werden dabei nicht übertragen** – die bleiben in den JTL-Sicherungen aus Punkt 7.
+Artikel aus JTL-POS werden **nicht** übernommen. Legen Sie die Artikel in Any.POS neu an:
 
-**a) In JTL exportieren** (am PC mit der JTL-Wawi – falls jemand anderes die Wawi betreut, geben Sie ihm
-diesen Abschnitt):
+1. Links **Artikel** → **Neuer Artikel**.
+2. Name, Bruttopreis und **Steuersatz (7 % oder 19 %)** eintragen. Preise und Steuersätze sehen Sie in
+   JTL-POS nach, solange es noch installiert ist. Im Zweifel beim Steuersatz den Steuerberater fragen.
+3. Speichern.
 
-1. JTL-Wawi öffnen → **JTL-Ameise** starten (Menü *Admin* bzw. Startmenü).
-2. **Export** → **Artikel** → **Artikeldaten**.
-3. Diese Felder auswählen:
-    - Interne Artikel-ID (kArtikel) – *empfohlen*
-    - **Artikelnummer**
-    - **Artikelname**
-    - **Brutto-Verkaufspreis** (VK Brutto)
-    - **Steuersatz**
-    - GTIN/EAN (Barcode) – falls Sie scannen
-    - Warengruppe – damit die Kasse die Artikel in Gruppen zeigt
-    - Aktiv
-4. Nur die Artikel auswählen, die an der Kasse verkauft werden (z. B. alle in JTL-POS aktiven Artikel).
-5. Als **CSV** speichern: Trennzeichen **Semikolon (;)**, Zeichensatz **UTF-8**.
-   Dateiname zum Beispiel `artikel_umzug.csv`.
-
-> Die Bezeichnungen können je nach JTL-Version leicht abweichen. Wichtig sind vor allem Artikelnummer,
-> Name, **Bruttopreis** und Steuersatz. Die Spaltennamen erkennt Any.POS selbst.
-
-**b) Datei auf das Tablet bringen** – eine Möglichkeit genügt:
-
-- auf einen USB-Stick kopieren und den Stick (mit Adapter) ans Tablet stecken, oder
-- in Google Drive / Ihre Cloud legen, oder
-- per Kabel vom PC in den Ordner *Download* des Tablets kopieren.
-
-**c) In Any.POS einspielen**
-
-1. Als Admin angemeldet: links **Import** → **CSV-Datei wählen …** → Datei antippen.
-2. Any.POS zeigt eine **Vorschau**: wie viele Artikel *neu* sind, welche Spalten erkannt wurden und ob es
-   **Fehler** gibt (mit Zeilennummer, z. B. „unbekannter Steuersatz“ oder „doppelte Artikelnummer“).
-3. Gibt es Fehler: **Verwerfen**, die Stelle in JTL korrigieren, neu exportieren und wieder einspielen.
-   Solange Fehler da sind, wird nichts übernommen – es kann also nichts halb kaputtgehen.
-4. Ohne Fehler: **Import bestätigen**.
-
-**d) Kurz prüfen**
-
-- Links **Artikel** öffnen und ein paar Artikel ansehen: Stimmen Preis und Steuersatz (19 % / 7 %)?
-- Falls Sie scannen: einen Barcode im Suchfeld der Kasse scannen – der Artikel muss erscheinen.
-  *(Noch nicht verkaufen, solange keine TSE eingerichtet ist.)*
-
-**Gut zu wissen**
-
-- Sie können den Import **jederzeit wiederholen**, z. B. am Umzugstag mit den aktuellsten Preisen. Es
-  entstehen keine doppelten Artikel; geänderte Preise werden übernommen.
-- Artikel, die in der Datei fehlen, werden **nicht** gelöscht. Nicht mehr gewünschte Artikel in JTL auf
-  „inaktiv“ setzen und neu einspielen oder in Any.POS unter **Artikel** deaktivieren.
-- Technische Einzelheiten für Ihren Betreuer: `JTL-Datenuebernahme.md`.
+Legen Sie alle Artikel an, die Sie am ersten Tag verkaufen wollen – am besten schon vor dem Umzugstag.
+Für den Test am Umzugstag (Punkt 12) selbst genügt ein einziger Artikel.
+Bisherige Verkäufe werden nicht übertragen – die bleiben in den JTL-POS-Sicherungen aus Punkt 7.
 
 ---
 
-## Teil B – Am Umzugstag: JTL-POS sauber beenden
+## Teil B – Am Umzugstag: JTL-POS abschließen (noch nicht abmelden)
+
+JTL-POS bleibt in diesem Teil **installiert und am Chip angemeldet**. Klappt der Umzug nicht, kassieren Sie
+einfach mit JTL-POS weiter (Punkt 13, Weg B).
 
 ### ☐ 6. Letzter Tag mit JTL-POS
 
-1. Letzten Verkauf in JTL-POS abschließen. **Kein Vorgang darf offen sein.**
+1. Letzten Verkauf in JTL-POS abschließen. **Kein Vorgang darf offen sein** (kein angefangener oder
+   geparkter Bon).
 2. **Tagesabschluss (Z-Bericht)** in JTL-POS machen.
 
 ### ☐ 7. Daten aus JTL-POS sichern (10 Jahre aufbewahren!)
@@ -156,11 +122,10 @@ In JTL-POS exportieren:
 
 Alles an **zwei Orten** speichern (z. B. USB-Stick und Cloud) und dem Steuerberater sagen, wo es liegt.
 
-### ☐ 8. JTL-POS vom Chip abmelden
+### ☐ 8. JTL-POS schließen
 
-Melden Sie JTL-POS wie vorbereitet vom Chip ab (nach der Anleitung von JTL bzw. Ihres Einrichters).
-Danach JTL-POS **nicht mehr zum Kassieren benutzen** – aber auch **nicht deinstallieren**, bis der
-Steuerberater zustimmt.
+JTL-POS **beenden, nicht deinstallieren**: die Taste für die zuletzt benutzten Apps antippen und JTL-POS
+wegwischen. Der Drucker mit dem Chip kann immer nur von **einer** App gleichzeitig benutzt werden.
 
 ---
 
@@ -175,7 +140,8 @@ Arbeiten Sie bei den Punkten 9 und 10 nur den Teil Ihrer Variante aus Punkt 2 ab
 
 1. Drucker einschalten und wie in Punkt 2a mit dem Tablet verbinden.
 2. **Einstellungen → Bondrucker & Schublade:** **USB** wählen → oben **Speichern**.
-3. Android fragt *„Any.POS Zugriff auf … erlauben?“* → Häkchen bei **„Immer für dieses Gerät“** setzen → **OK**.
+3. Android fragt *„Any.POS Zugriff auf … erlauben?“* → **OK**. Das Häkchen bei *„Immer für dieses Gerät“*
+   **noch nicht** setzen – das kommt erst in Punkt 13, wenn feststeht, dass Any.POS bleibt.
    *(Kommt die Frage nicht, Drucker-Kabel einmal ab- und wieder anstecken.)*
 4. **Testdruck**. Es muss ein Zettel kommen.
 
@@ -211,7 +177,8 @@ Das Tablet muss im **selben Netzwerk (WLAN)** wie der Drucker sein.
 3. Häkchen bei *„Die schriftliche Freigabe des Betreibers … liegt vor“* setzen und darunter Ihren Namen und
    das Datum eintragen (Sie sind der Betreiber).
 4. Die **Admin-PIN** eingeben – **einmal, sorgfältig, nicht raten**.
-5. **Registrierte Kassen lesen** antippen.
+5. **Registrierte Kassen lesen** antippen. In der Liste steht auch die Kasse von JTL-POS (zum Beispiel
+   „JTL-POS-1“). Das ist richtig – **nicht entfernen**.
 6. Erscheint **„KASSE-01“ registrieren**: antippen und mit **Registrieren** bestätigen.
    Steht dort schon „KASSE-01 ist an der TSE registriert“, ist nichts zu tun.
 7. **Bereitschaft prüfen** antippen. Unten muss stehen: **„✓ Bereitschaft: Anmeldung und Zeit in Ordnung“**.
@@ -220,23 +187,50 @@ Das Tablet muss im **selben Netzwerk (WLAN)** wie der Drucker sein.
 Meldet die Kasse etwas wie *„PIN falsch“*, *„Shared Secret passt nicht“* oder *„anderer Drucker“*:
 **nicht weiter probieren**, sondern Ihren Ansprechpartner anrufen.
 
-### ☐ 12. Erster Verkauf und Bon prüfen
+### ☐ 12. Inbetriebnahmetest: ein Bon und sein Storno
 
-Machen Sie den ersten echten Verkauf. Auf dem Bon muss unten stehen:
+Mit einem kleinen Testverkauf prüfen Sie, ob Any.POS mit dem Chip richtig unterschreibt. Der Verkauf wird
+danach storniert, sodass kein Umsatz bleibt. Beide Bons sind echte, unterschriebene Belege und bleiben
+gespeichert. Das ist so gewollt.
 
-- **TSE-Daten** mit Seriennummer, Transaktion, Signaturzähler, Start und Ende, Signatur
-- ein **QR-Code**
+1. Einen günstigen Artikel (zum Beispiel um 1 €) in den Warenkorb legen und **bar** bezahlen.
+2. Den Bon prüfen. Unten muss stehen:
+    - **TSE-Daten** mit Seriennummer, Transaktion, Signaturzähler, Start und Ende, Signatur
+    - ein **QR-Code**
 
-Steht dort **„TSE AUSGEFALLEN“** oder **„MOCK“**: Ansprechpartner anrufen.
+   Steht dort **„TSE AUSGEFALLEN“** oder **„MOCK“**: weiter mit Punkt 13, **Weg B**.
+3. Links **Belegjournal** öffnen, den Testbon antippen → **Storno** → bestätigen. Es kommt ein Stornobon,
+   ebenfalls mit TSE-Daten und QR-Code.
+4. Auf einem Zettel notieren: Datum, Uhrzeit, Nummer des Testbons und des Stornobons und den Vermerk
+   **„Inbetriebnahmetest“**. Zettel und beide Bons für den Steuerberater aufheben (Punkt 16).
 
 Die rote Leiste oben in der Kasse zeigt den Zustand des Chips. Dort sollte *„initialisiert · Self-Test ok ·
 Zeit gesetzt“* stehen. *(Die Leiste bleibt sichtbar, bis die Kasse offiziell abgenommen ist.)*
+
+### ☐ 13. Umziehen oder zurück
+
+**Weg A – alles in Ordnung** (Testbon und Stornobon mit TSE-Daten und QR-Code):
+
+1. Nur bei **USB**: Drucker-Kabel einmal ab- und wieder anstecken. Bei der Android-Frage jetzt das Häkchen
+   bei **„Immer für dieses Gerät“** setzen → **OK**.
+2. **JTL-POS vom Chip abmelden** (nach der Anleitung von JTL bzw. Ihres Einrichters). Danach JTL-POS
+   **nicht mehr zum Kassieren benutzen**.
+3. JTL-POS **nicht deinstallieren** – siehe Punkt 17.
+
+**Weg B – etwas stimmt nicht:**
+
+1. **Nicht weiter probieren** und nichts am Chip ändern.
+2. Any.POS schließen (aus den zuletzt benutzten Apps wegwischen).
+3. JTL-POS öffnen. Fragt Android nach dem USB-Zugriff: **OK**. In JTL-POS die **TSE-Info** prüfen –
+   der Chip muss erreichbar sein.
+4. Mit JTL-POS ganz normal weiter kassieren und den Ansprechpartner anrufen. Sagen Sie ihm, dass
+   Any.POS als „KASSE-01“ am Chip angemeldet ist und welche Bons dabei entstanden sind.
 
 ---
 
 ## Teil D – Nach dem Umzug
 
-### ☐ 13. Finanzamt informieren (innerhalb von 1 Monat)
+### ☐ 14. Finanzamt informieren (innerhalb von 1 Monat)
 
 Über **Mein ELSTER** → *„Mitteilung über elektronische Aufzeichnungssysteme“*:
 
@@ -245,17 +239,24 @@ Zeit gesetzt“* stehen. *(Die Leiste bleibt sichtbar, bis die Kasse offiziell a
 
 Am einfachsten macht das Ihr Steuerberater – geben Sie ihm die Angaben aus Punkt 2.
 
-### ☐ 14. Jeden Tag
+### ☐ 15. Jeden Tag
 
 - Abends in Any.POS **Abschluss** → **Z-Bon / Tagesabschluss …**.
 
-### ☐ 15. Für den Steuerberater
+### ☐ 16. Für den Steuerberater
 
 - **Kassenbuch** → **An Steuerberater senden** (Kassenbuch und DATEV-Datei). Eine E-Mail-Adresse, Berater-
   oder Mandantennummer müssen dafür **nicht** eingetragen sein.
 - **Abschluss** → **DSFinV-K-Export …** (das Datenformat, das das Finanzamt bei einer Prüfung verlangt).
 - Gelegentlich (z. B. einmal im Jahr, außerhalb der Öffnungszeiten): **Einstellungen → TSE →
   TSE-Daten exportieren …** (braucht die Admin-PIN). Während des Exports kann nicht kassiert werden.
+- Einmalig nach dem Umzug: den Zettel und die Bons vom Inbetriebnahmetest (Punkt 12) und den Ablageort der
+  JTL-POS-Daten (Punkt 7).
+
+### ☐ 17. JTL-POS deinstallieren – erst mit Freigabe
+
+Erst wenn der Steuerberater die Daten aus Punkt 7 hat, sie öffnen kann und zustimmt, darf JTL-POS vom Tablet.
+Bis dahin bleibt die App installiert, wird aber nicht mehr benutzt.
 
 ---
 
@@ -263,14 +264,14 @@ Am einfachsten macht das Ihr Steuerberater – geben Sie ihm die Angaben aus Pun
 
 | Was Sie sehen | Was Sie tun |
 |---|---|
-| „TSE nicht erreichbar“ – **USB** | Drucker an? Kabel (und ggf. Hub) fest eingesteckt? Steckt der Chip im Drucker (nicht am Tablet)? Drucker kurz aus- und einschalten; kommt die Android-Frage nach dem USB-Zugriff, **Immer** + **OK**. |
+| „TSE nicht erreichbar“ – **USB** | Drucker an? Kabel (und ggf. Hub) fest eingesteckt? Steckt der Chip im Drucker (nicht am Tablet)? Drucker kurz aus- und einschalten; kommt die Android-Frage nach dem USB-Zugriff: **OK** (nach Punkt 13 mit **Immer**). |
 | „TSE nicht erreichbar“ – **Netzwerk** | Ist der Drucker an und im WLAN? Tablet im selben WLAN? Drucker kurz aus- und einschalten. |
 | Tablet lädt nicht mehr (USB) | Ist der Drucker eingeschaltet? USB-C-Kabel an beiden Enden fest? Bei Hub: Ladekabel muss am **Ladeanschluss des Hubs** stecken (Punkt 2a). |
 | Beim Zertifikat-Bestätigen erscheint ein Fehler (nur Netzwerk) | Drucker-IP prüfen (Punkt 2). Hilft das nicht: Ansprechpartner anrufen – **nicht** selbst die Verschlüsselung ausschalten. |
 | „Druckerzertifikat hat sich geändert“ (nur Netzwerk) | Nicht einfach neu bestätigen – Ansprechpartner anrufen. |
-| Import zeigt Fehler | Zeilennummer und Grund notieren, in JTL korrigieren, neu exportieren, erneut einspielen. |
 | „PIN falsch“ / „PIN gesperrt“ | Nicht weiter probieren. Gesperrte PINs lassen sich nur mit dem PUK entsperren. |
 | „Kasse nicht registriert“ | Punkt 11 wiederholen. |
+| JTL-POS findet nach Weg B den Drucker nicht | Drucker-Kabel ab- und wieder anstecken, bei der Android-Frage JTL-POS erlauben. Hilft das nicht: Android-*Einstellungen → Apps → Any.POS → Standardmäßig öffnen → Standardeinstellungen löschen*, dann erneut anstecken. |
 | Bon zeigt „TSE AUSGEFALLEN“ | Weiter kassieren ist erlaubt, der Ausfall ist auf dem Bon vermerkt. Ursache beheben lassen. |
 
 **Ansprechpartner:** ______________________ **Telefon:** ______________________
